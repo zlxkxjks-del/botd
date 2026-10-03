@@ -1,0 +1,3168 @@
+-- ==============================================================================
+-- MM2 BOT (BETA) - FAST VISION, ULTRA-RESPONSIVE EVASION & SMOOTH CAMERA
+-- Target: Murder Mystery 2
+-- Full Production Build - Complete Uncut Source
+-- ==============================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local PathfindingService = game:GetService("PathfindingService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+
+local VirtualUser
+pcall(function()
+    VirtualUser = game:GetService("VirtualUser")
+end)
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+--------------------------------------------------------------------------------
+-- GLOBAL CONTROL STATE & NEURAL MEMORY ENGINE
+--------------------------------------------------------------------------------
+local AI_ENABLED = false
+local ESP_ENABLED = true
+local SILENT_AIM = true
+local HUMANIZER_ENABLED = true
+local EMOTES_ENABLED = true
+local CAMERA_LOCK = true
+local STEALTH_MODE = true
+local NEURAL_EVASION = true
+local AUTO_STRAFE = true
+local WALL_AVOIDANCE = true
+local KNIFE_DODGE = true 
+local VISUALIZER_ENABLED = true
+local MATRIX_SCANNER = true
+local WATER_EXIT = true
+local PARKOUR_LEARNING = true
+local IS_MINIMIZED = false
+
+local currentTargetPos = nil
+local isTargetCoin = false
+local currentTargetObject = nil
+local lastCheckPos = Vector3.zero
+local stuckCheckTimer = 0
+local wanderTimer = 0
+local lastEmoteTime = 0
+local lastShootTime = 0
+local lastThrowTime = 0
+local jumpCooldown = 0
+local currentEmoteTrack = nil
+local lastEmoteIndex = 0
+local currentJukeOffset = Vector3.zero
+local mapScanTimer = 0
+local matrixScanAngle = 0
+
+-- Movement & Camera Smoothing State
+local smoothedMoveDir = Vector3.zero
+local cameraLookTarget = nil
+local smoothedCameraLook = Vector3.zero
+local combatCameraTarget = nil
+local combatCameraUntil = 0
+local COMBAT_CAMERA_HOLD = 0.24
+local smoothedCamPos = Vector3.zero
+local smoothedVisionDir = Vector3.zero
+local currentCamDistance = 0.0
+local isCameraOverridden = false
+
+-- Camera is intentionally NOT driven by the bot.
+-- Roblox's normal first-person camera stays active so the player can move/aim it freely.
+local FIRST_PERSON_BOT = true
+-- The camera continuously follows navigation direction, like the bot's eyes in a live demo.
+local AUTO_AIM_CAMERA = true
+local CAMERA_AIM_SMOOTHNESS = 0.22
+local CAMERA_AIM_HEIGHT = 0.05
+local previousCameraMode = LocalPlayer.CameraMode
+local previousMinZoom = LocalPlayer.CameraMinZoomDistance
+local previousMaxZoom = LocalPlayer.CameraMaxZoomDistance
+
+-- Memory & Pathfinding Systems
+local ignoredCoinsMemory = {}
+local targetLastVelocity = {}
+local targetMotionMemory = {}
+local cachedWaypoints = {}
+local currentWaypointIndex = 1
+local lastPathTarget = Vector3.zero
+local isPathComputing = false
+
+-- BOT MAP MEMORY / LIVE RADAR
+local BOT_MAP_ENABLED = true
+local BOT_MAP_VISIBLE = false
+local BOT_MAP_CELL_SIZE = 4
+local BOT_MAP_MAX_CELLS = 5000
+local BOT_MAP_SCAN_INTERVAL = 0.16
+local BOT_MAP_SAVE_INTERVAL = 3.0
+local botMapState = {
+    mapName = "",
+    origin = nil,
+    cells = {},
+    lastScan = 0,
+    lastSave = 0,
+    loaded = false,
+    dirty = false,
+    lastPlayerCell = nil
+}
+local BotMapPanel = nil
+local BotMapCanvas = nil
+local BotMapStatus = nil
+local BotMapCells = {}
+local BOT_MAP_GRID = 31
+
+-- BODY-CLEARANCE MEMORY: the bot must fit through a passage, not merely see it.
+local BOT_BODY_WIDTH = 3.4
+local BOT_BODY_HEIGHT = 5.0
+
+-- Pre-allocated RaycastParams (Optimization to prevent GC micro-stutters)
+local globalRayParams = RaycastParams.new()
+globalRayParams.FilterType = Enum.RaycastFilterType.Exclude
+globalRayParams.IgnoreWater = true
+
+-- Lobby State Machine
+local lobbyAction = "WANDER"
+local lobbyActionTimer = 0
+local lobbyTargetPlayer = nil
+
+-- MM2 Native Emotes & Fallback Animations
+local MM2_EMOTES = {"dance", "dance2", "zen", "floss", "dab", "ninja", "zombie", "slash"}
+local FALLBACK_ANIMATIONS = {
+    "rbxassetid://507771019",
+    "rbxassetid://507772104",
+    "rbxassetid://507776043",
+    "rbxassetid://33379665"
+}
+
+-- Advanced Memory & Learning Data
+local MapHotspots = {} 
+local PlayerPatterns = {} 
+local wasDeadLastFrame = false
+local defaultFOV = Camera.FieldOfView
+
+-- Dynamic Responsive Hysteresis State
+local EscapeState = {
+    CurrentNode = nil,
+    NodeSetTime = 0,
+    HysteresisDuration = 0.25, -- Ultra fast refresh for instant evasion
+    LastMurdererPos = Vector3.zero
+}
+
+-- SMART NAVIGATION / THREAT MEMORY
+local NavState = {
+    LastPosition = nil,
+    LastProgressTime = 0,
+    LastMoveTarget = nil,
+    RecoveryCount = 0,
+    LastRecoveryTime = 0,
+    LastThreatUpdate = 0,
+    LastMurdererPos = nil,
+    LastMurdererTime = 0,
+    ClosingSpeed = 0,
+    MurdererVisible = false,
+    ThreatHysteresisUntil = 0
+}
+
+local NAV_TICK = 0.045
+local STUCK_TIME = 0.85
+local MIN_PROGRESS = 0.45
+local ROOM_PROBE_DISTANCE = 18
+local THREAT_MAX_DISTANCE = 55
+
+-- ULTIMATE TACTICAL MEMORY / PERFORMANCE LAYER
+local TacticalState = {
+    LastCoinScan = 0,
+    CoinCache = {},
+    TargetPlayer = nil,
+    TargetLockUntil = 0,
+    TargetSwitches = 0,
+    FailedTargets = {},
+    LastKnifeDodge = 0,
+    LastThreatState = 0,
+    ThreatConfidence = 0,
+    LastKnownMurdererPos = nil,
+    LastKnownMurdererTime = 0,
+    LastVisibleTime = 0,
+    LastVisualizerTime = 0,
+    LastActionTime = 0,
+    ActionJitter = 0
+}
+
+local TARGET_LOCK_TIME = 1.15
+local COIN_SCAN_INTERVAL = 0.35
+local ESP_INTERVAL = 0.65
+local VISUALIZER_MIN_INTERVAL = 0.045
+
+-- Peek & Bait Controller
+local PeekState = {
+    IsPeeking = false,
+    PeekStage = "NONE",
+    TargetHrp = nil,
+    CoverPos = nil,
+    PeekPos = nil,
+    Timer = 0
+}
+
+-- Player Spatial Memory Engine
+local ParkourMemory = {
+    LearnedNodes = {},
+    LastPlayerPositions = {},
+    LastObservationTime = 0
+}
+
+-- Neural Brain & Map Intelligence State
+local BrainState = {
+    CurrentMapName = "None (Lobby)",
+    CurrentMapModel = nil,
+    ThreatLevel = 0,
+    CoverNodes = {},
+    WallNodes = {},
+    ChokePoints = {},
+    LastAction = "INITIALIZING",
+    IsCornered = false,
+    IsSwimming = false,
+    CurrentStrategy = "FARM",
+    CurrentTargetPriority = "SAFE",
+    AvoidanceVector = Vector3.zero,
+    BestOpenVisionDir = Vector3.zero,
+    VisionOpennessScore = 1.0,
+    CoinsCollected = 0,
+    MaxCoins = 10,
+    MurdererDistance = 999
+}
+
+--------------------------------------------------------------------------------
+-- HELPER FUNCTIONS & MEMORY MANAGEMENT
+--------------------------------------------------------------------------------
+local function getCharacter()
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
+        if char.Humanoid.Health > 0 then
+            return char, char.HumanoidRootPart, char.Humanoid
+        end
+    end
+    return nil, nil, nil
+end
+
+local function updateRaycastFilter(char)
+    if char then
+        globalRayParams.FilterDescendantsInstances = {char}
+    else
+        globalRayParams.FilterDescendantsInstances = {}
+    end
+end
+
+local function getDistance(posA, posB)
+    return (posA - posB).Magnitude
+end
+
+local function safeGetGuiParent()
+    local success, res = pcall(function()
+        if gethui then return gethui() end
+        return CoreGui
+    end)
+    if success and res then return res end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local function logDeathPosition(pos)
+    local roundedPos = Vector3.new(math.floor(pos.X/10)*10, math.floor(pos.Y/10)*10, math.floor(pos.Z/10)*10)
+    MapHotspots[roundedPos] = (MapHotspots[roundedPos] or 0) - 100
+    if #MapHotspots > 50 then MapHotspots = {} end
+end
+
+local function drawDebugTracer(startPos, endPos, color)
+    if not VISUALIZER_ENABLED then return end
+    local now = os.clock()
+    if now - TacticalState.LastVisualizerTime < VISUALIZER_MIN_INTERVAL then return end
+    TacticalState.LastVisualizerTime = now
+    task.spawn(function()
+        pcall(function()
+            local dist = (startPos - endPos).Magnitude
+            if dist < 0.1 then return end
+            local part = Instance.new("Part")
+            part.Name = "MM2_Tracer"
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanQuery = false
+            part.CanTouch = false
+            part.Material = Enum.Material.Neon
+            part.Color = color
+            part.Transparency = 0.42
+            part.Size = Vector3.new(0.06, 0.06, dist)
+            part.CFrame = CFrame.lookAt(startPos, endPos) * CFrame.new(0, 0, -dist / 2)
+            part.Parent = Workspace
+            game:GetService("Debris"):AddItem(part, 0.08)
+        end)
+    end)
+end
+
+local function drawVisionNode(pos, color, size)
+    if not VISUALIZER_ENABLED then return end
+    task.spawn(function()
+        local part = Instance.new("Part")
+        part.Name = "MM2_VisionNode"
+        part.Shape = Enum.PartType.Ball
+        part.Anchored = true
+        part.CanCollide = false
+        part.Material = Enum.Material.Neon
+        part.Color = color
+        part.Transparency = 0.3
+        part.Size = Vector3.new(size or 0.6, size or 0.6, size or 0.6)
+        part.Position = pos
+        part.Parent = Workspace
+        game:GetService("Debris"):AddItem(part, 0.06)
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- ============================================================================
+-- BOT EYES / FIRST-PERSON VISION ENGINE
+-- The camera is the bot's "eyes": it stays at the head and continuously looks
+-- where the bot is actually moving.  It is never placed behind the character.
+-- ============================================================================
+local function setBotCameraMode(enabled)
+    local camera = Workspace.CurrentCamera
+    if not camera then return end
+
+    if enabled then
+        if not isCameraOverridden then
+            previousCameraMode = LocalPlayer.CameraMode
+            previousMinZoom = LocalPlayer.CameraMinZoomDistance
+            previousMaxZoom = LocalPlayer.CameraMaxZoomDistance
+        end
+
+        LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+        LocalPlayer.CameraMinZoomDistance = 0.5
+        LocalPlayer.CameraMaxZoomDistance = 0.5
+        isCameraOverridden = true
+    else
+        if isCameraOverridden then
+            LocalPlayer.CameraMode = previousCameraMode or Enum.CameraMode.Classic
+            LocalPlayer.CameraMinZoomDistance = previousMinZoom
+            LocalPlayer.CameraMaxZoomDistance = previousMaxZoom
+        end
+
+        isCameraOverridden = false
+        cameraLookTarget = nil
+        smoothedCameraLook = Vector3.zero
+        combatCameraTarget = nil
+        combatCameraUntil = 0
+    end
+end
+
+-- The bot's current visual focus. Navigation updates this every tick.
+local botVisionTarget = nil
+local botVisionDirection = Vector3.new(0, 0, -1)
+local BOT_EYE_HEIGHT = 0.05
+local BOT_VISION_SMOOTHNESS = 0.22
+local BOT_VISION_DISTANCE = 18
+
+local function setBotVisionTarget(targetPos)
+    if targetPos then
+        botVisionTarget = targetPos
+    end
+end
+
+local function setBotVisionDirection(direction)
+    if direction and direction.Magnitude > 0.05 then
+        botVisionDirection = direction.Unit
+        botVisionTarget = nil
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    local char, hrp, humanoid = getCharacter()
+    local camera = Workspace.CurrentCamera
+
+    if not AI_ENABLED or not CAMERA_LOCK or not char or not hrp or not humanoid or not FIRST_PERSON_BOT then
+        if isCameraOverridden then
+            setBotCameraMode(false)
+        end
+        return
+    end
+
+    setBotCameraMode(true)
+
+    if not camera then return end
+
+    -- Scriptable is used only for the bot's eyes.  The camera is still placed
+    -- exactly at the character's head, so it cannot push/collide with doors.
+    camera.CameraType = Enum.CameraType.Scriptable
+
+    local head = char:FindFirstChild("Head")
+    local eyePos = head and (head.Position + Vector3.new(0, BOT_EYE_HEIGHT, 0))
+        or (hrp.Position + Vector3.new(0, 1.55, 0))
+
+    local lookPos
+    if botVisionTarget then
+        lookPos = botVisionTarget
+    else
+        lookPos = eyePos + botVisionDirection * BOT_VISION_DISTANCE
+    end
+
+    local desired = CFrame.lookAt(eyePos, lookPos)
+    -- Keep the camera physically at the eyes every frame; only interpolate
+    -- rotation. This prevents any trailing/offset camera behavior in doors.
+    if camera.CFrame.Position.Magnitude == 0 then
+        camera.CFrame = desired
+    else
+        camera.CFrame = CFrame.new(eyePos) * camera.CFrame.Rotation:Lerp(desired.Rotation, BOT_VISION_SMOOTHNESS)
+    end
+end)
+
+local function updateCameraTarget(focusPos)
+    -- Compatibility helper. The eyes should look along the current movement
+    -- direction, not stare at a distant destination across the map.
+    local _, hrp = getCharacter()
+    if focusPos and hrp then
+        local dir = focusPos - hrp.Position
+        if dir.Magnitude > 0.05 then
+            setBotVisionDirection(dir)
+        end
+    end
+end
+
+local function setCombatCameraTarget(focusPos, holdTime)
+    -- Keep this API for the combat code, but make it feed the same continuous
+    -- first-person vision system.  There is no separate combat camera mode.
+    if focusPos and FIRST_PERSON_BOT then
+        setBotVisionTarget(focusPos)
+        combatCameraTarget = focusPos
+        combatCameraUntil = os.clock() + (holdTime or COMBAT_CAMERA_HOLD)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PLAYER PARKOUR & MANEUVER OBSERVATION ENGINE
+--------------------------------------------------------------------------------
+local function observePlayerMovements()
+    if not PARKOUR_LEARNING or os.clock() - ParkourMemory.LastObservationTime < 0.25 then return end
+    ParkourMemory.LastObservationTime = os.clock()
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local pChar = player.Character
+            local pHrp = pChar.HumanoidRootPart
+            local pHum = pChar:FindFirstChild("Humanoid")
+            local pName = player.Name
+
+            if pHum and pHum.Health > 0 then
+                local currentPos = pHrp.Position
+                local lastPos = ParkourMemory.LastPlayerPositions[pName]
+
+                if lastPos then
+                    local deltaY = currentPos.Y - lastPos.Y
+                    local horizDist = (Vector3.new(currentPos.X, 0, currentPos.Z) - Vector3.new(lastPos.X, 0, lastPos.Z)).Magnitude
+
+                    if deltaY > 3.2 and horizDist > 2.0 then
+                        local isAlreadyKnown = false
+                        for _, node in ipairs(ParkourMemory.LearnedNodes) do
+                            if (node.Position - currentPos).Magnitude < 6 then
+                                node.Score = node.Score + 1
+                                isAlreadyKnown = true
+                                break
+                            end
+                        end
+
+                        if not isAlreadyKnown and #ParkourMemory.LearnedNodes < 40 then
+                            table.insert(ParkourMemory.LearnedNodes, {
+                                Position = currentPos,
+                                Type = "PARKOUR_LEAP",
+                                Score = 1,
+                                AddedTime = os.clock()
+                            })
+                            if VISUALIZER_ENABLED then
+                                drawVisionNode(currentPos, Color3.fromRGB(255, 255, 0), 1.2)
+                            end
+                        end
+                    end
+                end
+                ParkourMemory.LastPlayerPositions[pName] = currentPos
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- LEDGE & VOID DETECTION
+--------------------------------------------------------------------------------
+local function checkLedgeAndVoid(hrp, moveDir)
+    if moveDir.Magnitude < 0.1 then return false end
+    local char, _, _ = getCharacter()
+    updateRaycastFilter(char)
+
+    local probePos = hrp.Position + (moveDir.Unit * 3.5)
+    local floorRay = Workspace:Raycast(probePos, Vector3.new(0, -12, 0), globalRayParams)
+
+    if not floorRay or not floorRay.Instance or not floorRay.Instance.CanCollide then
+        return true
+    end
+    return false
+end
+
+--------------------------------------------------------------------------------
+-- CONTINUOUS MOTION-AWARE 3D LIDAR MATRIX SCANNER (SMOOTH & ZERO-TWITCH)
+--------------------------------------------------------------------------------
+local function runMatrixScanner(hrp)
+    if not MATRIX_SCANNER then return end
+    
+    matrixScanAngle = (matrixScanAngle + 18) % 360
+    local char, _, _ = getCharacter()
+    updateRaycastFilter(char)
+
+    local scanRadius = 32
+    local anglesCount = 10
+    local maxDistDir = hrp.CFrame.LookVector
+    local maxDistanceFound = -1
+
+    -- Align scanning bias towards current velocity vector if moving
+    local vel = hrp.AssemblyLinearVelocity
+    local moveVel = Vector3.new(vel.X, 0, vel.Z)
+    local velDir = moveVel.Magnitude > 1.5 and moveVel.Unit or hrp.CFrame.LookVector
+
+    local pitchAngles = {-15, 0, 15}
+    local originHeights = {-1.0, 0.4}
+
+    for i = 1, anglesCount do
+        local angleRad = math.rad((i * (360 / anglesCount)) + matrixScanAngle)
+        local baseDir = (CFrame.Angles(0, angleRad, 0) * CFrame.new(velDir)).Position.Unit
+        
+        local totalHitDist = 0
+        local hitPos = nil
+        local obstacleHit = false
+        local lowFenceDetected = false
+
+        for _, hOffset in ipairs(originHeights) do
+            for _, pitch in ipairs(pitchAngles) do
+                local pitchRad = math.rad(pitch)
+                local scanDir = (CFrame.Angles(pitchRad, 0, 0) * CFrame.new(baseDir)).Position.Unit
+                local origin = hrp.Position + Vector3.new(0, hOffset, 0)
+                
+                local hit = Workspace:Raycast(origin, scanDir * scanRadius, globalRayParams)
+
+                if hit and hit.Instance and hit.Instance.CanCollide and not hit.Instance.Name:lower():find("coin") then
+                    obstacleHit = true
+                    local dist = (hit.Position - origin).Magnitude
+                    totalHitDist = totalHitDist + dist
+                    hitPos = hit.Position
+
+                    if hOffset <= -0.8 and dist < 3.8 then
+                        lowFenceDetected = true
+                    end
+                else
+                    totalHitDist = totalHitDist + scanRadius
+                end
+            end
+        end
+
+        local avgDist = totalHitDist / (#originHeights * #pitchAngles)
+
+        if avgDist > maxDistanceFound then
+            maxDistanceFound = avgDist
+            maxDistDir = baseDir
+        end
+
+        if lowFenceDetected and moveVel.Magnitude > 2.0 then
+            local _, _, humanoid = getCharacter()
+            if humanoid and os.clock() - jumpCooldown > 0.5 then
+                humanoid.Jump = true
+                jumpCooldown = os.clock()
+            end
+        end
+
+        if VISUALIZER_ENABLED and i % 5 == 0 then
+            local endPoint = hitPos or (hrp.Position + baseDir * scanRadius)
+            local rayColor = obstacleHit and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(0, 255, 180)
+            drawDebugTracer(hrp.Position, endPoint, rayColor)
+        end
+    end
+
+    -- Temporal Exponential Filter to prevent twitching/jerking
+    if smoothedVisionDir == Vector3.zero then
+        smoothedVisionDir = maxDistDir
+    else
+        smoothedVisionDir = smoothedVisionDir:Lerp(maxDistDir, 0.15)
+    end
+
+    BrainState.BestOpenVisionDir = smoothedVisionDir.Unit
+    BrainState.VisionOpennessScore = math.clamp(maxDistanceFound / scanRadius, 0.1, 1.0)
+end
+
+--------------------------------------------------------------------------------
+-- WATER & SWIMMING RECOVERY ENGINE
+--------------------------------------------------------------------------------
+local function findNearestShore(rootPos)
+    local scanAngles = {0, 45, 90, 135, 180, 225, 270, 315}
+    local scanDistance = 25
+    local char, _, _ = getCharacter()
+    updateRaycastFilter(char)
+
+    local bestShorePos = nil
+    local minDist = math.huge
+
+    for _, angle in ipairs(scanAngles) do
+        local rad = math.rad(angle)
+        local dir = Vector3.new(math.cos(rad), 0.5, math.sin(rad)).Unit * scanDistance
+        local result = Workspace:Raycast(rootPos, dir, globalRayParams)
+
+        if result and result.Material ~= Enum.Material.Water then
+            local dist = (result.Position - rootPos).Magnitude
+            if dist < minDist then
+                minDist = dist
+                bestShorePos = result.Position + result.Normal * 2.5
+            end
+        end
+    end
+
+    return bestShorePos or (rootPos + Vector3.new(0, 15, 0))
+end
+
+local function handleSwimming(humanoid, hrp)
+    if not WATER_EXIT then return false end
+
+    local currentState = humanoid:GetState()
+    BrainState.IsSwimming = (currentState == Enum.HumanoidStateType.Swimming)
+
+    if BrainState.IsSwimming then
+        local shorePos = findNearestShore(hrp.Position)
+        local moveDir = (shorePos - hrp.Position).Unit
+
+        humanoid:MoveTo(hrp.Position + moveDir * 10)
+        humanoid.Jump = true
+
+        if math.abs(hrp.AssemblyLinearVelocity.Y) < 1 then
+            hrp.AssemblyLinearVelocity = Vector3.new(
+                hrp.AssemblyLinearVelocity.X,
+                28,
+                hrp.AssemblyLinearVelocity.Z
+            )
+        end
+        return true
+    end
+    return false
+end
+
+--------------------------------------------------------------------------------
+-- DYNAMIC STRATEGY ENGINE
+--------------------------------------------------------------------------------
+local function DetermineOptimalStrategy(threat, role, hasGun, coins, maxCoins, murdererDist)
+    if role == "Sheriff" or role == "Murderer" then
+        return "ATTACK"
+    end
+    if threat >= 55 then return "ESCAPE" end
+    if hasGun then return "ATTACK" end
+    if coins >= maxCoins and maxCoins > 0 then return "HIDE" end
+    return "FARM"
+end
+--------------------------------------------------------------------------------
+-- COIN BAG CAP DETECTOR
+--------------------------------------------------------------------------------
+local function updateCoinBagStatus()
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if pGui then
+        local mainGui = pGui:FindFirstChild("MainGui") or pGui:FindFirstChild("Game")
+        if mainGui then
+            local coinContainer = mainGui:FindFirstChild("CoinContainer", true) or mainGui:FindFirstChild("Coins", true)
+            if coinContainer and coinContainer:FindFirstChild("TextLabel") then
+                local text = coinContainer.TextLabel.Text
+                local current, max = text:match("(%d+)/(%d+)")
+                if current and max then
+                    BrainState.CoinsCollected = tonumber(current)
+                    BrainState.MaxCoins = tonumber(max)
+                    return
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- MULTI-EMOTE CONTROLLER
+--------------------------------------------------------------------------------
+local function stopCurrentEmote()
+    local char, _, humanoid = getCharacter()
+    if not humanoid then return end
+
+    local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid
+
+    if currentEmoteTrack then
+        pcall(function() currentEmoteTrack:Stop(0.1) end)
+        currentEmoteTrack = nil
+    end
+
+    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+        local tName = track.Name:lower()
+        if tName:find("dance") or tName:find("emote") or track.Animation.AnimationId:find("50777") then
+            track:Stop(0.1)
+        end
+    end
+end
+
+local function playDirectLobbyEmote()
+    if not EMOTES_ENABLED then return end
+    if os.clock() - lastEmoteTime < 3.2 then return end
+    lastEmoteTime = os.clock()
+
+    stopCurrentEmote()
+
+    local nextIndex = math.random(1, #MM2_EMOTES)
+    if nextIndex == lastEmoteIndex then
+        nextIndex = (nextIndex % #MM2_EMOTES) + 1
+    end
+    lastEmoteIndex = nextIndex
+    local emoteName = MM2_EMOTES[nextIndex]
+
+    pcall(function()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if remotes then
+            local playEmoteRemote = remotes:FindFirstChild("PlayEmote") or remotes:FindFirstChild("Emote")
+            if playEmoteRemote and playEmoteRemote:IsA("RemoteEvent") then
+                playEmoteRemote:FireServer(emoteName)
+                return
+            end
+        end
+
+        local char, _, humanoid = getCharacter()
+        if humanoid then
+            local animator = humanoid:FindFirstChildOfClass("Animator") or humanoid
+            local emoteAnim = Instance.new("Animation")
+            local animId = FALLBACK_ANIMATIONS[math.random(1, #FALLBACK_ANIMATIONS)]
+            emoteAnim.AnimationId = animId
+            currentEmoteTrack = animator:LoadAnimation(emoteAnim)
+            currentEmoteTrack:Play()
+
+            task.delay(3.0, function()
+                stopCurrentEmote()
+            end)
+        end
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- ADVANCED MAP RECOGNITION & GEOMETRY ANALYZER
+--------------------------------------------------------------------------------
+local function scanAndAnalyzeMap()
+    if os.clock() - mapScanTimer < 1.5 then return end
+    mapScanTimer = os.clock()
+
+    BrainState.CoverNodes = {}
+    BrainState.WallNodes = {}
+    BrainState.ChokePoints = {}
+
+    local activeMap = nil
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("Model") and child.Name ~= "Lobby" and (child:FindFirstChild("CoinContainer") or child:FindFirstChild("Spawns") or child:FindFirstChild("Doors") or child:FindFirstChild("Map")) then
+            activeMap = child
+            break
+        end
+    end
+
+    if not activeMap then
+        local normalMap = Workspace:FindFirstChild("Map") or Workspace:FindFirstChild("CurrentMap")
+        if normalMap and normalMap:IsA("Model") then
+            activeMap = normalMap
+        end
+    end
+
+    if activeMap then
+        BrainState.CurrentMapName = activeMap.Name
+        BrainState.CurrentMapModel = activeMap
+
+        local primaryParts = {}
+        for _, part in ipairs(activeMap:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide and part.Transparency < 0.95 then
+                if part.Size.Y > 3 and (part.Size.X > 2 or part.Size.Z > 2) then
+                    table.insert(primaryParts, part)
+                    if #primaryParts >= 150 then break end
+                end
+            end
+        end
+
+        for _, part in ipairs(primaryParts) do
+            local pPos = part.Position
+            local pSize = part.Size
+
+            table.insert(BrainState.CoverNodes, pPos + Vector3.new(pSize.X/2 + 4.0, 0, pSize.Z/2 + 4.0))
+            table.insert(BrainState.CoverNodes, pPos - Vector3.new(pSize.X/2 + 4.0, 0, pSize.Z/2 + 4.0))
+            table.insert(BrainState.CoverNodes, pPos + Vector3.new(-pSize.X/2 - 4.0, 0, pSize.Z/2 + 4.0))
+            table.insert(BrainState.CoverNodes, pPos + Vector3.new(pSize.X/2 + 4.0, 0, -pSize.Z/2 - 4.0))
+
+            table.insert(BrainState.WallNodes, {Position = pPos, Size = pSize})
+        end
+    else
+        BrainState.CurrentMapName = "Lobby"
+        BrainState.CurrentMapModel = nil
+    end
+end
+
+--------------------------------------------------------------------------------
+-- ADAPTIVE PARKOUR & SPATIAL ENGINE
+--------------------------------------------------------------------------------
+local function isPathClear(origin, target)
+    local char, _, _ = getCharacter()
+    updateRaycastFilter(char)
+
+    local direction = target - origin
+    local hit = Workspace:Raycast(origin, direction, globalRayParams)
+
+    return hit == nil, hit
+end
+
+local threatRayParams = RaycastParams.new()
+threatRayParams.FilterType = Enum.RaycastFilterType.Exclude
+threatRayParams.IgnoreWater = true
+
+local function horizontalUnit(v)
+    local h = Vector3.new(v.X, 0, v.Z)
+    return h.Magnitude > 0.05 and h.Unit or Vector3.zero
+end
+
+local function getFloorPosition(pos)
+    updateRaycastFilter(LocalPlayer.Character)
+    local hit = Workspace:Raycast(pos + Vector3.new(0, 3, 0), Vector3.new(0, -14, 0), globalRayParams)
+    if hit and hit.Instance and hit.Instance.CanCollide then return hit.Position + Vector3.new(0, 2.2, 0) end
+    return nil
+end
+
+local function getOpenScore(hrp, dir, distance)
+    updateRaycastFilter(hrp.Parent)
+    local d = horizontalUnit(dir)
+    if d.Magnitude < 0.05 then return 0 end
+    local hit = Workspace:Raycast(hrp.Position, d * distance, globalRayParams)
+    return math.clamp((hit and hit.Distance or distance) / distance, 0, 1)
+end
+
+local function hasLineOfSight(origin, targetPos, ignoreChar)
+    local filter = {}
+    if ignoreChar then table.insert(filter, ignoreChar) end
+    local char = LocalPlayer.Character
+    if char then table.insert(filter, char) end
+    threatRayParams.FilterDescendantsInstances = filter
+
+    if not Workspace:Raycast(origin, targetPos - origin, threatRayParams) then return true end
+    local o2 = origin + Vector3.new(0, 0.55, 0)
+    local t2 = targetPos + Vector3.new(0, 0.55, 0)
+    if not Workspace:Raycast(o2, t2 - o2, threatRayParams) then return true end
+
+    local side = horizontalUnit((targetPos - origin):Cross(Vector3.yAxis))
+    if side.Magnitude > 0.05 then
+        local o3 = origin + side * 0.8 + Vector3.new(0, 1, 0)
+        local t3 = targetPos + side * 0.8 + Vector3.new(0, 1, 0)
+        if not Workspace:Raycast(o3, t3 - o3, threatRayParams) then return true end
+    end
+    return false
+end
+
+local function attemptDynamicParkour(hrp, humanoid, lookDir)
+    if os.clock() - jumpCooldown < 0.45 then return false end
+
+    local char, _, _ = getCharacter()
+    updateRaycastFilter(char)
+    
+    local footHit = Workspace:Raycast(hrp.Position - Vector3.new(0, 2.2, 0), lookDir * 3.5, globalRayParams)
+    local kneeHit = Workspace:Raycast(hrp.Position - Vector3.new(0, 1.0, 0), lookDir * 3.5, globalRayParams)
+    local waistHit = Workspace:Raycast(hrp.Position, lookDir * 3.5, globalRayParams)
+    local highHit = Workspace:Raycast(hrp.Position + Vector3.new(0, 2.0, 0), lookDir * 3.5, globalRayParams)
+
+    if (footHit or kneeHit or waistHit) and not highHit then
+        humanoid.Jump = true
+        jumpCooldown = os.clock()
+        if VISUALIZER_ENABLED then
+            drawDebugTracer(hrp.Position, hrp.Position + Vector3.new(0, 4, 0), Color3.fromRGB(255, 0, 255))
+        end
+        return true
+    end
+    return false
+end
+
+--------------------------------------------------------------------------------
+-- RE-ENGINEERED SMOOTH WALL SLIDING & WHISKER AVOIDANCE ENGINE
+--------------------------------------------------------------------------------
+local function getWhiskerAvoidanceVector(hrp, desiredDir, targetIsCoin, distToTarget)
+    if not WALL_AVOIDANCE or BrainState.IsSwimming or desiredDir.Magnitude < 0.1 then return Vector3.zero end
+
+    if targetIsCoin and distToTarget and distToTarget < 4.0 then
+        return Vector3.zero
+    end
+
+    local char, _, _ = getCharacter()
+    updateRaycastFilter(char)
+
+    local lookDir = Vector3.new(desiredDir.X, 0, desiredDir.Z).Unit
+    local scanAngles = {0, 30, -30, 60, -60}
+    
+    local avoidanceForce = Vector3.zero
+    local obstacleDetected = false
+
+    local origins = {
+        hrp.Position - Vector3.new(0, 1.8, 0),
+        hrp.Position - Vector3.new(0, 0.2, 0)
+    }
+
+    for _, origin in ipairs(origins) do
+        for _, angle in ipairs(scanAngles) do
+            local rad = math.rad(angle)
+            local scanDir = (CFrame.Angles(0, rad, 0) * CFrame.new(lookDir)).Position.Unit
+            local rayDist = (angle == 0) and 3.8 or 2.4
+
+            local hit = Workspace:Raycast(origin, scanDir * rayDist, globalRayParams)
+
+            if hit and hit.Instance and hit.Instance.CanCollide and not hit.Instance.Name:lower():find("door") and not hit.Instance.Name:lower():find("coin") then
+                obstacleDetected = true
+                local normal = hit.Normal
+                
+                local tangent = (desiredDir - (desiredDir:Dot(normal) * normal))
+                if tangent.Magnitude > 0.05 then
+                    tangent = tangent.Unit
+                else
+                    tangent = Vector3.new(-normal.Z, 0, normal.X)
+                end
+
+                local depthMultiplier = (rayDist - hit.Distance) / rayDist
+                avoidanceForce = avoidanceForce + (tangent * (depthMultiplier * 2.2)) + (normal * (depthMultiplier * 1.2))
+
+                if VISUALIZER_ENABLED then
+                    drawDebugTracer(origin, hit.Position, Color3.fromRGB(255, 120, 30))
+                end
+            end
+        end
+    end
+
+    if checkLedgeAndVoid(hrp, desiredDir) then
+        avoidanceForce = avoidanceForce - (lookDir * 4.0)
+    end
+
+    if obstacleDetected then
+        local _, _, humanoid = getCharacter()
+        if humanoid then attemptDynamicParkour(hrp, humanoid, lookDir) end
+    end
+
+    BrainState.AvoidanceVector = avoidanceForce
+    return avoidanceForce
+end
+
+--------------------------------------------------------------------------------
+-- REAL-TIME THREAT & PATTERN DETECTOR
+--------------------------------------------------------------------------------
+local function getKnifeDodgePosition(hrp, knife)
+    if not knife then return nil end
+    local now=os.clock()
+    if now-TacticalState.LastKnifeDodge<0.18 then return nil end
+    local vel=knife.AssemblyLinearVelocity or Vector3.zero
+    local toMe=hrp.Position-knife.Position
+    if vel.Magnitude<10 or toMe.Magnitude>50 then return nil end
+    local dir=vel.Unit
+    local along=toMe:Dot(dir)
+    if along<0 then return nil end
+    local closest=knife.Position+dir*along
+    local lateral=hrp.Position-closest
+    if lateral.Magnitude>9 then return nil end
+    local side=horizontalUnit(Vector3.new(-dir.Z,0,dir.X))
+    if side.Magnitude<0.05 then side=hrp.CFrame.RightVector end
+    local preferred=lateral.Magnitude>0.1 and lateral.Unit or side
+    local floor=getFloorPosition(hrp.Position+preferred*12)
+    if floor then TacticalState.LastKnifeDodge=now; return floor end
+    return nil
+end
+
+local function scanFlyingKnives(hrp)
+    if not KNIFE_DODGE then return nil end
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if (obj.Name == "Knife" or obj.Name:lower():find("knife") or obj.Name == "FlyingKnife") and obj:IsA("BasePart") then
+            local vel = obj.AssemblyLinearVelocity or Vector3.zero
+            if vel.Magnitude > 12 then
+                local dist = (obj.Position - hrp.Position).Magnitude
+                if dist < 45 then
+                    return obj
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function evaluateThreatLevel(murdererHrp)
+    if not murdererHrp then
+        BrainState.ThreatLevel = 0
+        BrainState.MurdererDistance = 999
+        BrainState.IsCornered = false
+        NavState.MurdererVisible = false
+        NavState.ClosingSpeed = 0
+        TacticalState.ThreatConfidence = 0
+        TacticalState.LastKnownMurdererPos = nil
+        Camera.FieldOfView = defaultFOV
+        return 0
+    end
+
+    local _, hrp, _ = getCharacter()
+    if not hrp then return 0 end
+    local now = os.clock()
+    local myPos, mPos = hrp.Position, murdererHrp.Position
+    local dist = (myPos - mPos).Magnitude
+    BrainState.MurdererDistance = dist
+
+    local closing = 0
+    if NavState.LastMurdererPos and NavState.LastMurdererTime > 0 then
+        local dt = math.max(now - NavState.LastMurdererTime, 0.03)
+        closing = math.clamp(((myPos - NavState.LastMurdererPos).Magnitude - dist) / dt, -35, 35)
+    end
+    NavState.LastMurdererPos, NavState.LastMurdererTime, NavState.ClosingSpeed = mPos, now, closing
+
+    local visible = hasLineOfSight(mPos + Vector3.new(0,1.5,0), myPos + Vector3.new(0,1.2,0), murdererHrp.Parent)
+    NavState.MurdererVisible = visible
+    if visible then
+        TacticalState.LastVisibleTime = now
+        TacticalState.LastKnownMurdererPos = mPos
+        TacticalState.LastKnownMurdererTime = now
+    end
+
+    local mv = murdererHrp.AssemblyLinearVelocity or Vector3.zero
+    local hv = Vector3.new(mv.X,0,mv.Z)
+    local toMe = Vector3.new(myPos.X-mPos.X,0,myPos.Z-mPos.Z)
+    local toward = hv.Magnitude > 2 and toMe.Magnitude > 0.1 and hv.Unit:Dot(toMe.Unit) > 0.35
+
+    local threat
+    if dist < 9 then threat=94
+    elseif dist < 16 then threat=82
+    elseif dist < 24 then threat=visible and 70 or 34
+    elseif dist < 34 then threat=visible and 54 or 16
+    elseif dist < THREAT_MAX_DISTANCE then threat=visible and 28 or 4
+    else threat=0 end
+
+    local confidence = (visible and 0.55 or 0) + (math.abs(closing)>3 and 0.2 or 0) + (toward and 0.2 or 0) + (dist<20 and 0.2 or 0)
+    if not visible and dist > 18 then confidence = confidence - 0.3 end
+    TacticalState.ThreatConfidence = math.clamp(confidence,0,1)
+
+    if visible and toward then threat = threat + math.clamp(closing*2.5,0,30)
+    elseif visible and closing > 7 then threat = threat + 10 end
+    if closing < -3 and dist > 16 then threat = threat - 20 end
+    -- A nearby murderer remains dangerous even when a wall briefly hides LOS.
+    -- Do not erase the threat just because the camera cannot see through a wall.
+    if not visible and dist > 28 then
+        threat = threat * 0.28
+    elseif not visible and dist > 22 then
+        threat = threat * 0.55
+    end
+
+    if not visible and TacticalState.LastKnownMurdererPos then
+        local unseen = now - TacticalState.LastKnownMurdererTime
+        if dist < 28 and unseen < 1.2 then threat = math.max(threat, 38 - unseen*20) end
+    end
+
+    if threat >= 55 then NavState.ThreatHysteresisUntil = now + 0.72
+    elseif now < NavState.ThreatHysteresisUntil then threat = math.max(threat,47) end
+
+    threat = math.clamp(math.floor(threat),0,100)
+    BrainState.ThreatLevel = threat
+    TacticalState.LastThreatState = threat
+
+    -- Do not modify the player's camera/FOV while the bot is active.
+    -- This keeps first-person aiming stable and fully user-controlled.
+    if Camera.FieldOfView ~= defaultFOV and not FIRST_PERSON_BOT then
+        Camera.FieldOfView = defaultFOV
+    end
+    return threat
+end
+
+--------------------------------------------------------------------------------
+-- ULTRA-RESPONSIVE ANTI-PANIC ESCAPE ENGINE
+--------------------------------------------------------------------------------
+local function getCoverEscapePosition(hrpPos, threatHrp, escapeDist)
+    if not threatHrp then return hrpPos + Vector3.new(25, 0, 25) end
+
+    local threatPos = threatHrp.Position
+    local curTime = os.clock()
+
+    local distToThreatNow = (threatPos - hrpPos).Magnitude
+    local dynamicHysteresis = math.clamp(distToThreatNow / 40, 0.1, 0.4)
+
+    if EscapeState.CurrentNode and (curTime - EscapeState.NodeSetTime < dynamicHysteresis) then
+        local distToNode = (EscapeState.CurrentNode - hrpPos).Magnitude
+        local threatMovedSignificantly = (threatPos - EscapeState.LastMurdererPos).Magnitude > 8
+        
+        if distToNode > 2.5 and not threatMovedSignificantly then
+            return EscapeState.CurrentNode
+        end
+    end
+
+    local awayDir = (hrpPos - threatPos).Unit
+    local bestPos = nil
+    local maxSafetyScore = -math.huge
+
+    for _, learnedNode in ipairs(ParkourMemory.LearnedNodes) do
+        local nodePos = learnedNode.Position
+        local distToMe = (nodePos - hrpPos).Magnitude
+
+        if distToMe < 60 and distToMe > 5 then
+            local distToThreat = (nodePos - threatPos).Magnitude
+            if distToThreat > distToMe + 10 then
+                local parkourScore = (distToThreat * 3.5) - (distToMe * 1.0) + (learnedNode.Score * 40)
+                if parkourScore > maxSafetyScore then
+                    maxSafetyScore = parkourScore
+                    bestPos = nodePos
+                end
+            end
+        end
+    end
+
+    if #BrainState.CoverNodes > 0 then
+        for _, nodePos in ipairs(BrainState.CoverNodes) do
+            local distToMe = (nodePos - hrpPos).Magnitude
+            if distToMe < 65 and distToMe > 6 then
+                local visibleFromThreat = hasLineOfSight(threatPos, nodePos)
+                local distToThreat = (nodePos - threatPos).Magnitude
+
+                local nodeScore = (distToThreat * 3.0) - (distToMe * 1.2)
+                if not visibleFromThreat then nodeScore = nodeScore + 200 end
+
+                if nodeScore > maxSafetyScore then
+                    maxSafetyScore = nodeScore
+                    bestPos = nodePos
+                end
+            end
+        end
+    end
+
+    if not bestPos then
+        local char, _, _ = getCharacter()
+        updateRaycastFilter(char)
+
+        for i = 0, 15 do
+            local angle = math.rad(i * 22.5)
+            local scanDir = Vector3.new(
+                awayDir.X * math.cos(angle) - awayDir.Z * math.sin(angle),
+                0,
+                awayDir.X * math.sin(angle) + awayDir.Z * math.cos(angle)
+            ).Unit
+
+            local hit = Workspace:Raycast(hrpPos, scanDir * escapeDist, globalRayParams)
+            local clearDist = hit and hit.Distance or escapeDist
+            local candPos = hrpPos + (scanDir * math.max(clearDist - 3.0, 5))
+
+            local visibleFromThreat = hasLineOfSight(threatPos, candPos)
+            local score = ((candPos - threatPos).Magnitude * 2.5) + clearDist
+            if not visibleFromThreat then score = score + 120 end
+
+            if score > maxSafetyScore then
+                maxSafetyScore = score
+                bestPos = candPos
+            end
+        end
+    end
+
+    local finalEscape = bestPos or (hrpPos + awayDir * escapeDist)
+
+    EscapeState.CurrentNode = finalEscape
+    EscapeState.NodeSetTime = curTime
+    EscapeState.LastMurdererPos = threatPos
+
+    if VISUALIZER_ENABLED then
+        drawDebugTracer(hrpPos, finalEscape, Color3.fromRGB(0, 255, 200))
+    end
+
+    return finalEscape
+end
+
+--------------------------------------------------------------------------------
+-- SMART GUN RETRIEVAL & FLANK DETOUR ENGINE
+--------------------------------------------------------------------------------
+local function isGunDropSafe(droppedGun, murdererHrp)
+    if not droppedGun then return false end
+    if not murdererHrp then return true end
+
+    local gunPos = droppedGun.Position
+    local mPos = murdererHrp.Position
+    local mDistToGun = (gunPos - mPos).Magnitude
+
+    local mName = murdererHrp.Parent.Name
+    if PlayerPatterns[mName] and PlayerPatterns[mName].CamperScore > 4 and mDistToGun < 50 then
+        return false
+    end
+
+    if mDistToGun < 38 then return false end
+
+    local char, hrp, _ = getCharacter()
+    if hrp then
+        local myDistToGun = (hrp.Position - gunPos).Magnitude
+        local myDistToM = (hrp.Position - mPos).Magnitude
+
+        if myDistToM < 24 or (myDistToM < myDistToGun and mDistToGun < myDistToGun) then
+            return false
+        end
+    end
+    return true
+end
+
+local function getFlankGunPosition(hrpPos, gunPos, murdererPos)
+    local gunToM = (murdererPos - gunPos).Unit
+    local perpendicularDir = Vector3.new(-gunToM.Z, 0, gunToM.X)
+
+    local optionA = gunPos + (perpendicularDir * 32)
+    local optionB = gunPos - (perpendicularDir * 32)
+
+    local distA = (hrpPos - optionA).Magnitude
+    local distB = (hrpPos - optionB).Magnitude
+
+    local chosenFlankNode = (distA < distB) and optionA or optionB
+
+    drawDebugTracer(hrpPos, chosenFlankNode, Color3.fromRGB(255, 255, 0))
+    return chosenFlankNode
+end
+
+--------------------------------------------------------------------------------
+-- LIVE BOT MAP / SPATIAL MEMORY ENGINE
+-- Builds a top-down occupancy map from the bot's own vision, saves it, and
+-- lets the user watch the map being discovered in a small square window.
+--------------------------------------------------------------------------------
+local function botMapFileName(mapName)
+    local safe = tostring(mapName or "Unknown"):gsub("[^%w_%-]", "_")
+    return "MM2_BOT_MAP_" .. safe .. ".json"
+end
+
+local function botMapCellKey(gx, gz)
+    return tostring(gx) .. ":" .. tostring(gz)
+end
+
+local function botMapWorldToCell(pos)
+    if not botMapState.origin then return 0, 0 end
+    local gx = math.floor((pos.X - botMapState.origin.X) / BOT_MAP_CELL_SIZE + 0.5)
+    local gz = math.floor((pos.Z - botMapState.origin.Z) / BOT_MAP_CELL_SIZE + 0.5)
+    return gx, gz
+end
+
+local function botMapCellToWorld(gx, gz)
+    return Vector3.new(
+        botMapState.origin.X + gx * BOT_MAP_CELL_SIZE,
+        0,
+        botMapState.origin.Z + gz * BOT_MAP_CELL_SIZE
+    )
+end
+
+local function botMapSetCell(gx, gz, value)
+    local key = botMapCellKey(gx, gz)
+    local old = botMapState.cells[key]
+    if old ~= value then
+        botMapState.cells[key] = value
+        botMapState.dirty = true
+    end
+end
+
+local function botMapMarkLine(fromPos, toPos, value)
+    local dx = toPos.X - fromPos.X
+    local dz = toPos.Z - fromPos.Z
+    local steps = math.max(1, math.ceil(math.sqrt(dx * dx + dz * dz) / (BOT_MAP_CELL_SIZE * 0.65)))
+    for i = 0, steps do
+        local t = i / steps
+        local p = fromPos:Lerp(toPos, t)
+        local gx, gz = botMapWorldToCell(p)
+        botMapSetCell(gx, gz, value)
+    end
+end
+
+local function botMapTrim()
+    local count = 0
+    for _ in pairs(botMapState.cells) do count = count + 1 end
+    if count <= BOT_MAP_MAX_CELLS then return end
+
+    local player = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not player then return end
+    local pgx, pgz = botMapWorldToCell(player.Position)
+    local entries = {}
+    for key, value in pairs(botMapState.cells) do
+        local a, b = key:match("([^:]+):([^:]+)")
+        local gx, gz = tonumber(a), tonumber(b)
+        if gx and gz then
+            table.insert(entries, {key = key, value = value, d = math.abs(gx - pgx) + math.abs(gz - pgz)})
+        end
+    end
+    table.sort(entries, function(a, b) return a.d < b.d end)
+    botMapState.cells = {}
+    for i = 1, math.min(BOT_MAP_MAX_CELLS, #entries) do
+        botMapState.cells[entries[i].key] = entries[i].value
+    end
+end
+
+local function botMapSave()
+    if not BOT_MAP_ENABLED or not botMapState.mapName or botMapState.mapName == "" or not botMapState.origin then return end
+    if type(writefile) ~= "function" then return end
+
+    local payload = {
+        mapName = botMapState.mapName,
+        origin = {x = botMapState.origin.X, z = botMapState.origin.Z},
+        cellSize = BOT_MAP_CELL_SIZE,
+        cells = botMapState.cells
+    }
+
+    local ok = pcall(function()
+        writefile(botMapFileName(botMapState.mapName), HttpService:JSONEncode(payload))
+    end)
+    if ok then
+        botMapState.lastSave = os.clock()
+        botMapState.dirty = false
+    end
+end
+
+local function botMapLoad(mapName, startPos)
+    if not BOT_MAP_ENABLED then return end
+    if botMapState.loaded and botMapState.mapName == mapName then return end
+
+    botMapState.mapName = mapName or "Unknown"
+    botMapState.cells = {}
+    botMapState.origin = startPos and Vector3.new(startPos.X, 0, startPos.Z) or Vector3.zero
+    botMapState.loaded = true
+    botMapState.dirty = false
+
+    if type(isfile) == "function" and type(readfile) == "function" then
+        local file = botMapFileName(botMapState.mapName)
+        local exists = false
+        pcall(function() exists = isfile(file) end)
+        if exists then
+            pcall(function()
+                local data = HttpService:JSONDecode(readfile(file))
+                if data and data.origin then
+                    botMapState.origin = Vector3.new(tonumber(data.origin.x) or botMapState.origin.X, 0, tonumber(data.origin.z) or botMapState.origin.Z)
+                end
+                if data and type(data.cells) == "table" then
+                    botMapState.cells = data.cells
+                end
+            end)
+        end
+    end
+end
+
+local function botMapHasBodyClearance(hrp, direction, distance)
+    if not hrp or not direction or direction.Magnitude < 0.05 then return false end
+    updateRaycastFilter(hrp.Parent)
+    local dir = Vector3.new(direction.X, 0, direction.Z)
+    if dir.Magnitude < 0.05 then return false end
+    dir = dir.Unit
+
+    local origin = hrp.Position + Vector3.new(0, 2.25, 0)
+    local size = Vector3.new(BOT_BODY_WIDTH, BOT_BODY_HEIGHT, BOT_BODY_WIDTH)
+    local ok, hit = pcall(function()
+        return Workspace:Blockcast(CFrame.new(origin), size, dir * math.max(distance, 0.25), globalRayParams)
+    end)
+    return ok and hit == nil
+end
+
+local function botMapPointFits(hrp, point)
+    if not hrp or not point then return false end
+    local delta = point - hrp.Position
+    local horizontal = Vector3.new(delta.X, 0, delta.Z)
+    if horizontal.Magnitude > 0.25 and not botMapHasBodyClearance(hrp, horizontal, math.min(horizontal.Magnitude, 4.0)) then
+        return false
+    end
+    local floor = Workspace:Raycast(point + Vector3.new(0, 2.5, 0), Vector3.new(0, -7, 0), globalRayParams)
+    return floor ~= nil
+end
+
+local function botMapScanVision(hrp)
+    if not BOT_MAP_ENABLED or not hrp then return end
+    local now = os.clock()
+    if now - botMapState.lastScan < BOT_MAP_SCAN_INTERVAL then return end
+    botMapState.lastScan = now
+
+    botMapLoad(BrainState.CurrentMapName or "Unknown", hrp.Position)
+    if not botMapState.origin then botMapState.origin = Vector3.new(hrp.Position.X, 0, hrp.Position.Z) end
+
+    local gx, gz = botMapWorldToCell(hrp.Position)
+    botMapSetCell(gx, gz, 1)
+
+    -- Radial lidar: the bot learns open floor and solid boundaries around itself.
+    for i = 0, 15 do
+        local angle = math.rad(i * 22.5)
+        local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+        local maxDist = 22
+        local hit = Workspace:Raycast(hrp.Position + Vector3.new(0, 1.4, 0), dir * maxDist, globalRayParams)
+        local endPos = hit and (hit.Position - dir * 0.35) or (hrp.Position + dir * maxDist)
+        botMapMarkLine(hrp.Position, endPos, 1)
+        if hit then
+            local bx, bz = botMapWorldToCell(hit.Position)
+            botMapSetCell(bx, bz, 2)
+        end
+    end
+
+    -- Short body-width probes are what teach the bot that a visible slit is not
+    -- necessarily traversable by its own character.
+    for i = 0, 7 do
+        local angle = math.rad(i * 45)
+        local dir = Vector3.new(math.cos(angle), 0, math.sin(angle))
+        if not botMapHasBodyClearance(hrp, dir, 6) then
+            local p = hrp.Position + dir * 4
+            local bx, bz = botMapWorldToCell(p)
+            botMapSetCell(bx, bz, 2)
+        end
+    end
+
+    botMapTrim()
+    if botMapState.dirty and now - botMapState.lastSave > BOT_MAP_SAVE_INTERVAL then
+        botMapSave()
+    end
+end
+
+local function botMapResetForNewMap()
+    botMapState.loaded = false
+    botMapState.mapName = ""
+    botMapState.origin = nil
+    botMapState.cells = {}
+    botMapState.dirty = false
+end
+
+--------------------------------------------------------------------------------
+-- FLUID NON-JERKY NAVIGATION & CONTINUOUS ASYNC PATHFINDING ENGINE
+--------------------------------------------------------------------------------
+local function getSafeProbePosition(hrp, preferredDir, distance)
+    local char = hrp.Parent
+    updateRaycastFilter(char)
+
+    local base = Vector3.new(preferredDir.X, 0, preferredDir.Z)
+    if base.Magnitude < 0.1 then
+        base = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+    end
+    base = base.Unit
+
+    local angles = {0, 35, -35, 70, -70, 110, -110, 180}
+    local best, bestScore = nil, -math.huge
+
+    for _, deg in ipairs(angles) do
+        local dir = CFrame.fromAxisAngle(Vector3.yAxis, math.rad(deg)):VectorToWorldSpace(base)
+        local hit = Workspace:Raycast(hrp.Position, dir * distance, globalRayParams)
+        local freeDist = hit and hit.Distance or distance
+        local probeDist = math.min(math.max(freeDist - 2.2, 4), distance)
+        local probe = hrp.Position + dir * probeDist
+        local floor = Workspace:Raycast(probe + Vector3.new(0, 2, 0), Vector3.new(0, -12, 0), globalRayParams)
+        local fits = botMapHasBodyClearance(hrp, dir, math.min(probeDist, 4.5))
+
+        if fits and floor and floor.Instance and floor.Instance.CanCollide then
+            local score = freeDist * 2 + dir:Dot(base) * 8
+            if score > bestScore then
+                bestScore = score
+                best = probe
+            end
+        end
+    end
+
+    return best
+end
+
+local function recoverFromStuck(hrp, humanoid, targetPos)
+    local now = os.clock()
+    if now - NavState.LastRecoveryTime < 0.65 then return false end
+
+    NavState.LastRecoveryTime = now
+    NavState.RecoveryCount = NavState.RecoveryCount + 1
+    cachedWaypoints = {}
+    currentWaypointIndex = 1
+    isPathComputing = false
+
+    stopCurrentEmote()
+    humanoid.Jump = true
+
+    local targetDir = Vector3.new(targetPos.X - hrp.Position.X, 0, targetPos.Z - hrp.Position.Z)
+    if targetDir.Magnitude < 0.1 then targetDir = hrp.CFrame.LookVector end
+
+    local probe = getSafeProbePosition(hrp, targetDir.Unit, ROOM_PROBE_DISTANCE)
+    if probe then
+        currentTargetPos = probe
+        isTargetCoin = false
+        return true
+    end
+
+    local openDir = BrainState.BestOpenVisionDir
+    if openDir.Magnitude > 0.1 then
+        currentTargetPos = hrp.Position + Vector3.new(openDir.X, 0, openDir.Z).Unit * 12
+        isTargetCoin = false
+        return true
+    end
+    return false
+end
+
+local climbableCache = {}
+local climbableCacheTime = 0
+
+local function getNearbyClimbable(hrp, targetPos)
+    if not hrp or not targetPos then return nil end
+    local now = os.clock()
+    if now - climbableCacheTime > 1.0 then
+        climbableCache = {}
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("TrussPart") or (obj:IsA("BasePart") and string.find(string.lower(obj.Name), "ladder")) then
+                if obj.CanCollide ~= false then
+                    table.insert(climbableCache, obj)
+                end
+            end
+        end
+        climbableCacheTime = now
+    end
+
+    local best, bestScore = nil, math.huge
+    local goalY = targetPos.Y
+    for _, obj in ipairs(climbableCache) do
+        if obj and obj.Parent then
+            local p = obj.Position
+            local horizontal = (Vector3.new(p.X, 0, p.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Magnitude
+            local yDiff = math.abs(goalY - hrp.Position.Y)
+            if horizontal < 18 and yDiff > 2 then
+                local score = horizontal + math.abs(goalY - p.Y) * 0.35
+                if score < bestScore then
+                    bestScore = score
+                    best = obj
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function navigateToSmooth(targetPos, isCoinTarget)
+    local char, hrp, humanoid = getCharacter()
+    if not char or not hrp or not humanoid or not targetPos then return end
+
+    local dist = getDistance(hrp.Position, targetPos)
+    if dist > 1.5 then stopCurrentEmote() end
+    -- Camera is updated below from the exact movement/waypoint direction.
+
+    -- Enable climbing state and actively approach nearby ladders/trusses when
+    -- the destination is on another floor.
+    pcall(function() humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, true) end)
+    local climbable = getNearbyClimbable(hrp, targetPos)
+    if climbable and math.abs(targetPos.Y - hrp.Position.Y) > 2 then
+        local climbPos = climbable.Position + Vector3.new(0, math.clamp(targetPos.Y - climbable.Position.Y, -2, 2), 0)
+        setBotVisionTarget(climbPos + Vector3.new(0, 1.2, 0))
+        humanoid:MoveTo(climbPos)
+        if (climbable.Position - hrp.Position).Magnitude < 3.5 then
+            humanoid:MoveTo(climbable.Position + Vector3.new(0, 3, 0))
+        end
+        return
+    end
+
+    local targetFlat = Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z)
+    local toTarget = targetFlat - hrp.Position
+    if toTarget.Magnitude < 0.15 then return end
+
+    local desiredDir=toTarget.Unit
+    if HUMANIZER_ENABLED and not isTargetCoin and BrainState.CurrentStrategy~="ESCAPE" and dist>8 then
+        if os.clock()-TacticalState.LastActionTime>0.8 then
+            TacticalState.LastActionTime=os.clock()
+            TacticalState.ActionJitter=math.rad(math.random(-7,7))
+        end
+        desiredDir=CFrame.Angles(0,TacticalState.ActionJitter,0):VectorToWorldSpace(desiredDir)
+    end
+    local clearLine=isPathClear(hrp.Position,targetFlat)
+    local avoidance = getWhiskerAvoidanceVector(hrp, desiredDir, isCoinTarget, dist)
+    local forwardOpen=getOpenScore(hrp,desiredDir,8)
+    local leftOpen=getOpenScore(hrp,CFrame.Angles(0,math.rad(55),0):VectorToWorldSpace(desiredDir),7)
+    local rightOpen=getOpenScore(hrp,CFrame.Angles(0,math.rad(-55),0):VectorToWorldSpace(desiredDir),7)
+    BrainState.IsCornered=forwardOpen<0.25 and leftOpen<0.32 and rightOpen<0.32
+    if BrainState.IsCornered then
+        local escapeDir=leftOpen>rightOpen and CFrame.Angles(0,math.rad(75),0):VectorToWorldSpace(desiredDir) or CFrame.Angles(0,math.rad(-75),0):VectorToWorldSpace(desiredDir)
+        local escapeProbe=getSafeProbePosition(hrp,escapeDir,ROOM_PROBE_DISTANCE)
+        if escapeProbe then
+            currentTargetPos=escapeProbe
+            isTargetCoin=false
+            smoothedMoveDir=Vector3.zero
+            setBotVisionTarget(escapeProbe + Vector3.new(0, 0.8, 0))
+            humanoid:MoveTo(escapeProbe)
+            if os.clock()-jumpCooldown>0.45 then humanoid.Jump=true; jumpCooldown=os.clock() end
+            return
+        end
+    end
+
+    local bodyClear = botMapHasBodyClearance(hrp, desiredDir, math.min(dist, 8))
+    if clearLine and bodyClear and avoidance.Magnitude < 0.25 and dist < 14 then
+        smoothedMoveDir = smoothedMoveDir:Lerp(desiredDir, 0.28)
+        setBotVisionDirection(smoothedMoveDir)
+        humanoid:MoveTo(hrp.Position + smoothedMoveDir.Unit * math.min(dist, 8))
+        cachedWaypoints = {}
+        currentWaypointIndex = 1
+        return
+    end
+
+    if not clearLine or avoidance.Magnitude >= 0.25 then
+        local verticalGoal = math.abs(targetPos.Y - hrp.Position.Y) > 2.0
+        if not isPathComputing and
+           (verticalGoal or getDistance(lastPathTarget, targetPos) > 3.5 or #cachedWaypoints == 0 or currentWaypointIndex > #cachedWaypoints) then
+
+            lastPathTarget = targetPos
+            isPathComputing = true
+            local startPos = hrp.Position
+
+            task.spawn(function()
+                local path = PathfindingService:CreatePath({
+                    AgentRadius = 2.0,
+                    AgentHeight = 5.0,
+                    AgentCanJump = true,
+                    AgentCanClimb = true,
+                    AgentJumpHeight = 8.5,
+                    WaypointSpacing = 3.0
+                })
+
+                local ok = pcall(function()
+                    path:ComputeAsync(startPos, targetPos)
+                end)
+
+                if ok and path.Status == Enum.PathStatus.Success then
+                    cachedWaypoints = path:GetWaypoints()
+                    currentWaypointIndex = (#cachedWaypoints >= 2) and 2 or 1
+                else
+                    cachedWaypoints = {}
+                    currentWaypointIndex = 1
+                end
+                isPathComputing = false
+            end)
+        end
+
+        if #cachedWaypoints > 0 and currentWaypointIndex <= #cachedWaypoints then
+            local wp = cachedWaypoints[currentWaypointIndex]
+            local wpPos = wp.Position
+            local wpDelta = wpPos - hrp.Position
+            local verticalDelta = wpDelta.Y
+            local horizontalDelta = Vector3.new(wpDelta.X, 0, wpDelta.Z)
+            local wpDir = horizontalDelta
+
+            -- IMPORTANT: the old bot threw away Y here.  That made it walk
+            -- toward the foot of stairs forever instead of actually climbing.
+            -- For vertical waypoints we send MoveTo the real 3D waypoint.
+            if wpDelta.Magnitude > 0.1 then
+                local finalDir = horizontalDelta.Magnitude > 0.1 and horizontalDelta.Unit or Vector3.zero
+
+                if horizontalDelta.Magnitude > 0.1 then
+                    local wpAvoid = getWhiskerAvoidanceVector(hrp, horizontalDelta.Unit, isCoinTarget, dist)
+                    if wpAvoid.Magnitude > 0.15 and math.abs(verticalDelta) < 1.8 then
+                        finalDir = (horizontalDelta.Unit + wpAvoid * 0.8).Unit
+                    end
+                    smoothedMoveDir = smoothedMoveDir:Lerp(finalDir, 0.25)
+                end
+
+                -- Look exactly where the bot is travelling, including upward
+                -- and downward stair/ladder movement.
+                setBotVisionTarget(wpPos + Vector3.new(0, 0.35, 0))
+
+                if math.abs(verticalDelta) > 1.35 then
+                    humanoid:MoveTo(wpPos)
+                else
+                    local moveDir = smoothedMoveDir.Magnitude > 0.05 and smoothedMoveDir.Unit or finalDir
+                    if moveDir.Magnitude > 0.05 then
+                        humanoid:MoveTo(hrp.Position + moveDir * math.min(math.max(horizontalDelta.Magnitude, 3), 7))
+                    else
+                        humanoid:MoveTo(wpPos)
+                    end
+                end
+            end
+
+            if wp.Action == Enum.PathWaypointAction.Jump and os.clock() - jumpCooldown > 0.45 then
+                humanoid.Jump = true
+                jumpCooldown = os.clock()
+            end
+
+            if getDistance(hrp.Position, wpPos) < 2.8 then
+                currentWaypointIndex = currentWaypointIndex + 1
+            end
+        else
+            local probe = getSafeProbePosition(hrp, desiredDir, 8)
+            if probe then
+                setBotVisionTarget(probe + Vector3.new(0, 0.8, 0))
+                humanoid:MoveTo(probe)
+            else
+                recoverFromStuck(hrp, humanoid, targetPos)
+            end
+        end
+        return
+    end
+
+    smoothedMoveDir = smoothedMoveDir:Lerp(desiredDir, 0.25)
+    setBotVisionDirection(smoothedMoveDir)
+    humanoid:MoveTo(hrp.Position + smoothedMoveDir.Unit * math.min(dist, 8))
+end
+--------------------------------------------------------------------------------
+-- PREDICTIVE AIM ENGINE & KNIFE THROWING LOGIC
+--------------------------------------------------------------------------------
+local function getPredictedPosition(targetHrp, projectileSpeed)
+    if not targetHrp then return nil end
+    local _, myHrp, _ = getCharacter()
+    if not myHrp then return targetHrp.Position end
+
+    local now = os.clock()
+    local currentVel = targetHrp.AssemblyLinearVelocity or Vector3.zero
+    local targetId = targetHrp:GetDebugId()
+    local memory = targetMotionMemory[targetId]
+
+    if not memory then
+        memory = {Velocity = currentVel, Time = now}
+        targetMotionMemory[targetId] = memory
+    end
+
+    local sampleDt = math.clamp(now - memory.Time, 0.02, 0.15)
+    local accel = (currentVel - memory.Velocity) / sampleDt
+    memory.Velocity = currentVel
+    memory.Time = now
+    targetLastVelocity[targetId] = currentVel
+
+    local dist = (myHrp.Position - targetHrp.Position).Magnitude
+    local speed = projectileSpeed or 280
+    local timeToHit = math.clamp(dist / math.max(speed, 1) + 0.045, 0.03, 0.42)
+
+    local predictedPos = targetHrp.Position
+        + (currentVel * timeToHit)
+        + (0.5 * accel * (timeToHit ^ 2))
+
+    -- Aim slightly above the root so the shot does not clip low obstacles or the floor.
+    predictedPos = predictedPos + Vector3.new(0, 1.15, 0)
+
+    if targetHrp.Parent:FindFirstChild("Humanoid") and targetHrp.Parent.Humanoid.FloorMaterial == Enum.Material.Air then
+        predictedPos = predictedPos + Vector3.new(0, -0.6, 0)
+    end
+
+    if VISUALIZER_ENABLED then
+        drawDebugTracer(myHrp.Position, predictedPos, Color3.fromRGB(255, 255, 0))
+    end
+
+    return predictedPos
+end
+
+local function executeKnifeThrow(knifeTool, targetPos)
+    local char, hrp, humanoid = getCharacter()
+    if not char or not hrp or not humanoid or not knifeTool or not targetPos then return false end
+    if os.clock() - lastThrowTime < 0.85 then return false end
+
+    -- Equip the real MM2 knife first.
+    if knifeTool.Parent ~= char then
+        humanoid:EquipTool(knifeTool)
+        task.wait(0.08)
+    end
+
+    if knifeTool.Parent ~= char then
+        return false
+    end
+
+    -- Face the target, but never take ownership of Camera.CFrame.
+    local flatTarget = Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z)
+    if (flatTarget - hrp.Position).Magnitude > 0.15 then
+        hrp.CFrame = CFrame.lookAt(hrp.Position, flatTarget)
+    end
+
+    -- Aim the first-person camera at the actual predicted knife impact point.
+    setCombatCameraTarget(targetPos, 0.42)
+    if FIRST_PERSON_BOT then
+        task.wait()
+    end
+
+    local activated = false
+
+    -- MM2's client-side knife input is normally driven by Tool.Activated.
+    -- Use the actual Tool first instead of guessing a RemoteEvent signature.
+    pcall(function()
+        knifeTool:Activate()
+        activated = true
+    end)
+
+    -- Also send a center-screen click. In first person the center is the
+    -- player's reticle, so this does not require a custom chase camera.
+    local camera = Workspace.CurrentCamera
+    if camera then
+        local centerX = camera.ViewportSize.X * 0.5
+        local centerY = camera.ViewportSize.Y * 0.5
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
+            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
+            activated = true
+        end)
+    end
+
+    -- Some MM2 builds expose a Throw/ThrowKnife RemoteEvent under the
+    -- equipped tool. Only use a tool-local remote; never fire an arbitrary
+    -- recursive ReplicatedStorage remote with an unknown argument contract.
+    if not activated then
+        local throwRemote = knifeTool:FindFirstChild("Throw")
+            or knifeTool:FindFirstChild("ThrowKnife")
+
+        if throwRemote and throwRemote:IsA("RemoteEvent") then
+            pcall(function()
+                throwRemote:FireServer(targetPos)
+                activated = true
+            end)
+        end
+    end
+
+    if activated then
+        lastThrowTime = os.clock()
+        if VISUALIZER_ENABLED then
+            drawDebugTracer(hrp.Position + Vector3.new(0, 1.2, 0), targetPos, Color3.fromRGB(255, 0, 0))
+        end
+    end
+
+    return activated
+end
+
+local function executeRealTapAttack(tool, targetPos)
+    local char, hrp, humanoid = getCharacter()
+    if not char or not hrp or not humanoid or not tool or not targetPos then return false end
+    if os.clock() - lastShootTime < 0.18 then return false end
+
+    if tool.Parent ~= char then
+        humanoid:EquipTool(tool)
+        task.wait(0.06)
+    end
+    if tool.Parent ~= char then return false end
+
+    -- Never switch to Scriptable here.
+    -- Turn the character toward the target and let the native first-person
+    -- camera remain responsible for the player's view.
+    local flatTarget = Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z)
+    if (flatTarget - hrp.Position).Magnitude > 0.1 then
+        hrp.CFrame = CFrame.lookAt(hrp.Position, flatTarget)
+    end
+
+    setCombatCameraTarget(targetPos, 0.32)
+    task.wait()
+
+    local activated = false
+    pcall(function()
+        tool:Activate()
+        activated = true
+    end)
+
+    local camera = Workspace.CurrentCamera
+    if camera then
+        local x = camera.ViewportSize.X * 0.5
+        local y = camera.ViewportSize.Y * 0.5
+        pcall(function()
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+            VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+            activated = true
+        end)
+    end
+
+    if activated then
+        lastShootTime = os.clock()
+        if VISUALIZER_ENABLED then
+            drawDebugTracer(hrp.Position + Vector3.new(0, 1.5, 0), targetPos, Color3.fromRGB(0, 255, 255))
+        end
+    end
+
+    return activated
+end
+
+--------------------------------------------------------------------------------
+-- TARGET PRIORITY & COIN CLUSTER MECHANICS
+--------------------------------------------------------------------------------
+local RoundState = {
+    Phase = "LOBBY",
+    LastChange = 0,
+    MapSeen = false,
+    RoleAssigned = false,
+    GuiSignal = nil,
+    GuiSignalUntil = 0
+}
+
+local function hasLocalWeapon()
+    local char = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+
+    local function hasAny(container)
+        if not container then return false end
+        return container:FindFirstChild("Knife", true)
+            or container:FindFirstChild("KnifeServer", true)
+            or container:FindFirstChild("Gun", true)
+            or container:FindFirstChild("Revolver", true)
+    end
+
+    return hasAny(char) or hasAny(backpack)
+end
+
+local function getActiveMap()
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("Model") and child.Name ~= "Lobby" then
+            if child:FindFirstChild("CoinContainer", true)
+                or child:FindFirstChild("Spawns", true)
+                or child:FindFirstChild("Doors", true)
+                or child:FindFirstChild("Map", true) then
+                return child
+            end
+        end
+    end
+
+    local map = Workspace:FindFirstChild("CurrentMap") or Workspace:FindFirstChild("Map")
+    if map and map:IsA("Model") and map.Name ~= "Lobby" then
+        return map
+    end
+
+    return nil
+end
+
+local function getRoundGuiSignal()
+    local now = os.clock()
+    if now < RoundState.GuiSignalUntil then
+        return RoundState.GuiSignal
+    end
+
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pg then
+        RoundState.GuiSignal = nil
+        RoundState.GuiSignalUntil = now + 0.25
+        return nil
+    end
+
+    -- Only inspect a limited number of visible text objects to avoid a large
+    -- recursive scan every navigation tick.
+    local checked = 0
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            if obj.Visible then
+                local t = string.lower(obj.Text or "")
+                checked += 1
+
+                if t:find("murderer") and (t:find("chance") or t:find("your") or t:find("role")) then
+                    RoundState.GuiSignal = "ROUND_START"
+                    RoundState.GuiSignalUntil = now + 0.25
+                    return RoundState.GuiSignal
+                end
+                if t:find("sheriff") and t:find("chance") then
+                    RoundState.GuiSignal = "ROUND_START"
+                    RoundState.GuiSignalUntil = now + 0.25
+                    return RoundState.GuiSignal
+                end
+                if t:find("innocent") and (t:find("chance") or t:find("role")) then
+                    RoundState.GuiSignal = "ROUND_START"
+                    RoundState.GuiSignalUntil = now + 0.25
+                    return RoundState.GuiSignal
+                end
+                if t:find("game over") or t:find("victory") or t:find("defeat") then
+                    RoundState.GuiSignal = "ROUND_END"
+                    RoundState.GuiSignalUntil = now + 0.25
+                    return RoundState.GuiSignal
+                end
+
+                if checked > 120 then break end
+            end
+        end
+    end
+
+    RoundState.GuiSignal = nil
+    RoundState.GuiSignalUntil = now + 0.25
+    return nil
+end
+
+local function isLobby()
+    local char, hrp, humanoid = getCharacter()
+    if not hrp or not humanoid or humanoid.Health <= 0 then
+        return true
+    end
+
+    local activeMap = getActiveMap()
+    local explicitGui = getRoundGuiSignal()
+    local weapon = hasLocalWeapon()
+
+    -- A weapon on the local player is the strongest client-side signal that
+    -- the role has been assigned and the round is live.
+    if weapon and activeMap then
+        RoundState.Phase = "MATCH"
+        RoundState.MapSeen = true
+        RoundState.RoleAssigned = true
+        return false
+    end
+
+    if explicitGui == "ROUND_START" and activeMap then
+        RoundState.Phase = "MATCH"
+        RoundState.MapSeen = true
+        return false
+    elseif explicitGui == "ROUND_END" then
+        RoundState.Phase = "LOBBY"
+        RoundState.RoleAssigned = false
+        return true
+    end
+
+    if activeMap then
+        RoundState.MapSeen = true
+
+        -- For an Innocent, there is no weapon to confirm the role. In an
+        -- active map, use distance from the lobby model to distinguish the
+        -- pre-round waiting area from the actual map.
+        local lobby = Workspace:FindFirstChild("Lobby")
+        if lobby then
+            local ok, lobbyCF, lobbySize = pcall(function()
+                return lobby:GetBoundingBox()
+            end)
+
+            if ok and lobbyCF and lobbySize then
+                local rel = lobbyCF:PointToObjectSpace(hrp.Position)
+                local insideLobby =
+                    math.abs(rel.X) <= lobbySize.X * 0.5 + 12 and
+                    math.abs(rel.Y) <= lobbySize.Y * 0.5 + 20 and
+                    math.abs(rel.Z) <= lobbySize.Z * 0.5 + 12
+
+                if insideLobby and not RoundState.RoleAssigned then
+                    RoundState.Phase = "LOBBY"
+                    return true
+                end
+            end
+        end
+
+        -- If a real map exists and the character is no longer inside the
+        -- lobby, treat it as match even for Innocent.
+        RoundState.Phase = "MATCH"
+        return false
+    end
+
+    RoundState.Phase = "LOBBY"
+    RoundState.RoleAssigned = false
+    return true
+end
+
+local function getMyRole()
+    local char = LocalPlayer.Character
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+
+    local function findTool(container, ...)
+        if not container then return nil end
+        for _, name in ipairs({...}) do
+            local obj = container:FindFirstChild(name, true)
+            if obj then return obj end
+        end
+        return nil
+    end
+
+    if not char then return "Unknown" end
+
+    if findTool(char, "Knife", "KnifeServer") or findTool(backpack, "Knife", "KnifeServer") then
+        RoundState.RoleAssigned = true
+        return "Murderer"
+    end
+
+    if findTool(char, "Gun", "Revolver") or findTool(backpack, "Gun", "Revolver") then
+        RoundState.RoleAssigned = true
+        return "Sheriff"
+    end
+
+    if RoundState.Phase == "MATCH" then
+        RoundState.RoleAssigned = true
+        return "Innocent"
+    end
+
+    return "Lobby"
+end
+
+local function findSpecialPlayer(roleName)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local char = player.Character
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            local bp = player:FindFirstChildOfClass("Backpack")
+
+            if hum and hum.Health > 0 and hrp then
+                local function hasTool(container, ...)
+                    if not container then return false end
+                    for _, name in ipairs({...}) do
+                        if container:FindFirstChild(name, true) then
+                            return true
+                        end
+                    end
+                    return false
+                end
+
+                if roleName == "Murderer" then
+                    if hasTool(char, "Knife", "KnifeServer")
+                        or hasTool(bp, "Knife", "KnifeServer")
+                        or player:FindFirstChild("Knife", true) then
+                        return player
+                    end
+                elseif roleName == "Sheriff" then
+                    if hasTool(char, "Gun", "Revolver")
+                        or hasTool(bp, "Gun", "Revolver")
+                        or player:FindFirstChild("Gun", true) then
+                        return player
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function findDroppedGun()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj.Name == "GunDrop" or (obj:IsA("Tool") and obj.Name == "Gun" and obj.Parent == Workspace) then
+            if obj:IsA("BasePart") then return obj
+            elseif obj:IsA("Model") or obj:IsA("Tool") then
+                return obj.PrimaryPart or obj:FindFirstChild("Handle") or obj:FindFirstChildWhichIsA("BasePart")
+            end
+        end
+    end
+    return nil
+end
+
+local function getMurdererTarget()
+    local now = os.clock()
+    local sheriff = findSpecialPlayer("Sheriff")
+    if sheriff and sheriff.Character and sheriff.Character:FindFirstChild("HumanoidRootPart") then
+        TacticalState.TargetPlayer, TacticalState.TargetLockUntil = sheriff, now+TARGET_LOCK_TIME
+        return sheriff,true
+    end
+    local _, hrp, _ = getCharacter()
+    if not hrp then return nil,false end
+    if TacticalState.TargetPlayer and now < TacticalState.TargetLockUntil then
+        local p=TacticalState.TargetPlayer
+        local t=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+        local h=p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+        if t and h and h.Health>0 then
+            local bp=p:FindFirstChild("Backpack")
+            return p, (p.Character:FindFirstChild("Gun") ~= nil or (bp and bp:FindFirstChild("Gun") ~= nil))
+        end
+    end
+    local list, gunDrop = {}, findDroppedGun()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p~=LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local t=p.Character.HumanoidRootPart
+            local h=p.Character:FindFirstChildOfClass("Humanoid")
+            if h and h.Health>0 then
+                local dist=getDistance(hrp.Position,t.Position)
+                local bp=p:FindFirstChild("Backpack")
+                local hasGun=p.Character:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun"))
+                local visible=hasLineOfSight(hrp.Position+Vector3.new(0,1.2,0),t.Position+Vector3.new(0,1.2,0),p.Character)
+                local score=100-math.clamp(dist,0,100)+(hasGun and 120 or 0)+(visible and 25 or 0)
+                if gunDrop and getDistance(t.Position,gunDrop.Position)<24 then score=score+35 end
+                if TacticalState.FailedTargets[p] and now<TacticalState.FailedTargets[p] then score=score-90 end
+                table.insert(list,{player=p,score=score,gun=hasGun and true or false})
+            end
+        end
+    end
+    table.sort(list,function(a,b)return a.score>b.score end)
+    if #list>0 then
+        TacticalState.TargetPlayer=list[1].player
+        TacticalState.TargetLockUntil=now+TARGET_LOCK_TIME
+        TacticalState.TargetSwitches=TacticalState.TargetSwitches+1
+        return list[1].player,list[1].gun
+    end
+    TacticalState.TargetPlayer=nil
+    return nil,false
+end
+
+-- DENSITY-AWARE COIN CLUSTER SEARCH
+local function refreshCoinCache()
+    local now = os.clock()
+    if now - TacticalState.LastCoinScan < COIN_SCAN_INTERVAL then return end
+    TacticalState.LastCoinScan = now
+    TacticalState.CoinCache = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj.Name:lower():find("coin") and (not ignoredCoinsMemory[obj] or now >= ignoredCoinsMemory[obj]) then
+            local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+            if part and part:IsA("BasePart") and part.Transparency < 0.85 then
+                table.insert(TacticalState.CoinCache,{obj=obj,part=part,pos=part.Position})
+            end
+        end
+    end
+end
+
+local function findNearestCoin(hrpPos)
+    refreshCoinCache()
+    local murdererPlayer = findSpecialPlayer("Murderer")
+    local murdererHrp = murdererPlayer and murdererPlayer.Character and murdererPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local best, bestScore = nil, -math.huge
+    for _, item in ipairs(TacticalState.CoinCache) do
+        local dist = getDistance(hrpPos,item.pos)
+        if dist < 180 then
+            local visible = hasLineOfSight(hrpPos+Vector3.new(0,1,0),item.pos+Vector3.new(0,1,0))
+            local cluster = 0
+            for _, other in ipairs(TacticalState.CoinCache) do
+                if other.obj ~= item.obj and (other.pos-item.pos).Magnitude < 13 then
+                    cluster = cluster + 12
+                    if cluster >= 48 then break end
+                end
+            end
+            local score = 330-dist+cluster
+            score = visible and score+18 or score*0.45
+            if murdererHrp then
+                local dm = getDistance(item.pos,murdererHrp.Position)
+                if dm < 32 then score = score-1800 elseif dm < 48 then score = score-300 end
+            end
+            local key = Vector3.new(math.floor(item.pos.X/10)*10,math.floor(item.pos.Y/10)*10,math.floor(item.pos.Z/10)*10)
+            score = score + math.clamp(MapHotspots[key] or 0,-120,30)
+            if score > bestScore then bestScore,best = score,item.part end
+        end
+    end
+    return best
+end
+
+local function getRandomWanderPoint(hrpPos)
+    for _ = 1, 6 do
+        local rx = math.random(-30, 30)
+        local rz = math.random(-30, 30)
+        local candPos = hrpPos + Vector3.new(rx, 0, rz)
+        if isPathClear(hrpPos, candPos) then
+            local key=Vector3.new(math.floor(candPos.X/10)*10,math.floor(candPos.Y/10)*10,math.floor(candPos.Z/10)*10)
+            if (MapHotspots[key] or 0)>-80 then return candPos end
+        end
+    end
+    
+    if BrainState.BestOpenVisionDir.Magnitude > 0.1 then
+        return hrpPos + BrainState.BestOpenVisionDir * 15
+    end
+    return hrpPos + Vector3.new(math.random(-15, 15), 0, math.random(-15, 15))
+end
+
+--------------------------------------------------------------------------------
+-- ESP HIGHLIGHT MODULE
+--------------------------------------------------------------------------------
+local function applyHighlight(obj, color, name)
+    if not obj then return end
+    local hl = obj:FindFirstChild(name)
+    if not hl then
+        hl = Instance.new("Highlight")
+        hl.Name = name
+        hl.FillTransparency = 0.45
+        hl.OutlineTransparency = 0
+        hl.Parent = obj
+    end
+    hl.FillColor = color
+    hl.OutlineColor = color
+    hl.Enabled = ESP_ENABLED
+end
+
+local function updateESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local char = player.Character
+            local hl = char:FindFirstChild("MM2_ESP_HL")
+
+            if not ESP_ENABLED then
+                if hl then hl.Enabled = false end
+            else
+                local bp = player:FindFirstChild("Backpack")
+                if char:FindFirstChild("Knife") or (bp and bp:FindFirstChild("Knife")) then
+                    applyHighlight(char, Color3.fromRGB(255, 50, 50), "MM2_ESP_HL")
+                elseif char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")) then
+                    applyHighlight(char, Color3.fromRGB(50, 150, 255), "MM2_ESP_HL")
+                else
+                    applyHighlight(char, Color3.fromRGB(50, 255, 100), "MM2_ESP_HL")
+                end
+            end
+        end
+    end
+
+    local droppedGun = findDroppedGun()
+    if droppedGun then
+        applyHighlight(droppedGun, Color3.fromRGB(255, 220, 0), "MM2_GUN_ESP")
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(ESP_INTERVAL)
+        pcall(updateESP)
+    end
+end)
+
+--------------------------------------------------------------------------------
+-- ANTI-AFK ENGINE
+--------------------------------------------------------------------------------
+if VirtualUser then
+    LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.zero)
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- MINIMIZABLE UI CONTROL GUI (NAME: MM2 BOT (BETA))
+--------------------------------------------------------------------------------
+pcall(function()
+    local oldUI = safeGetGuiParent():FindFirstChild("MM2_BOT_BETA") or safeGetGuiParent():FindFirstChild("MM2_Mobile_AI_v102")
+    if oldUI then oldUI:Destroy() end
+end)
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MM2_BOT_BETA"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = safeGetGuiParent()
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 230, 0, 455)
+MainFrame.Position = UDim2.new(0.05, 0, 0.18, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+MainFrame.Active = true
+MainFrame.ClipsDescendants = true
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Thickness = 2
+MainStroke.Color = Color3.fromRGB(50, 50, 70)
+MainStroke.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(0.75, 0, 0, 26)
+TitleLabel.Position = UDim2.new(0.05, 0, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "MM2 BOT (BETA)"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextSize = 10
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.Parent = MainFrame
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 24, 0, 22)
+MinBtn.Position = UDim2.new(0.86, 0, 0.015, 0)
+MinBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+MinBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+MinBtn.TextSize = 12
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.Text = "[-]"
+MinBtn.Parent = MainFrame
+
+local MinBtnCorner = Instance.new("UICorner")
+MinBtnCorner.CornerRadius = UDim.new(0, 4)
+MinBtnCorner.Parent = MinBtn
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0.9, 0, 0, 24)
+ToggleBtn.Position = UDim2.new(0.05, 0, 0.065, 0)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 60, 60)
+ToggleBtn.TextSize = 10
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Text = "BOT ENGINE: [ OFF ]"
+ToggleBtn.Parent = MainFrame
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 6)
+ToggleCorner.Parent = ToggleBtn
+
+local MapLabel = Instance.new("TextLabel")
+MapLabel.Size = UDim2.new(0.9, 0, 0, 13)
+MapLabel.Position = UDim2.new(0.05, 0, 0.125, 0)
+MapLabel.BackgroundTransparency = 1
+MapLabel.TextColor3 = Color3.fromRGB(120, 200, 255)
+MapLabel.TextSize = 9
+MapLabel.Font = Enum.Font.GothamBold
+MapLabel.Text = "Map: Scanning..."
+MapLabel.TextXAlignment = Enum.TextXAlignment.Left
+MapLabel.Parent = MainFrame
+
+local MemoryLabel = Instance.new("TextLabel")
+MemoryLabel.Size = UDim2.new(0.9, 0, 0, 13)
+MemoryLabel.Position = UDim2.new(0.05, 0, 0.155, 0)
+MemoryLabel.BackgroundTransparency = 1
+MemoryLabel.TextColor3 = Color3.fromRGB(255, 220, 100)
+MemoryLabel.TextSize = 9
+MemoryLabel.Font = Enum.Font.GothamBold
+MemoryLabel.Text = "Parkour Nodes Learned: 0"
+MemoryLabel.TextXAlignment = Enum.TextXAlignment.Left
+MemoryLabel.Parent = MainFrame
+
+local ThreatLabel = Instance.new("TextLabel")
+ThreatLabel.Size = UDim2.new(0.9, 0, 0, 13)
+ThreatLabel.Position = UDim2.new(0.05, 0, 0.185, 0)
+ThreatLabel.BackgroundTransparency = 1
+ThreatLabel.TextColor3 = Color3.fromRGB(255, 180, 60)
+ThreatLabel.TextSize = 9
+ThreatLabel.Font = Enum.Font.GothamBold
+ThreatLabel.Text = "Threat Score: 0%"
+ThreatLabel.TextXAlignment = Enum.TextXAlignment.Left
+ThreatLabel.Parent = MainFrame
+
+local TelemetryLabel=Instance.new("TextLabel")
+TelemetryLabel.Size=UDim2.new(0.9,0,0,13)
+TelemetryLabel.Position=UDim2.new(0.05,0,0.235,0)
+TelemetryLabel.BackgroundTransparency=1
+TelemetryLabel.TextColor3=Color3.fromRGB(140,210,180)
+TelemetryLabel.TextSize=8
+TelemetryLabel.Font=Enum.Font.GothamMedium
+TelemetryLabel.Text="AI: Tactical brain online"
+TelemetryLabel.TextXAlignment=Enum.TextXAlignment.Left
+TelemetryLabel.Parent=MainFrame
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(0.9, 0, 0, 13)
+StatusLabel.Position = UDim2.new(0.05, 0, 0.265, 0)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+StatusLabel.TextSize = 9
+StatusLabel.Font = Enum.Font.GothamMedium
+StatusLabel.Text = "State: IDLE"
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Parent = MainFrame
+
+local EspBtn = Instance.new("TextButton")
+EspBtn.Size = UDim2.new(0.42, 0, 0, 19)
+EspBtn.Position = UDim2.new(0.05, 0, 0.30, 0)
+EspBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+EspBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+EspBtn.TextSize = 9
+EspBtn.Font = Enum.Font.GothamBold
+EspBtn.Text = "ESP: ON"
+EspBtn.Parent = MainFrame
+
+local EspBtnCorner = Instance.new("UICorner")
+EspBtnCorner.CornerRadius = UDim.new(0, 6)
+EspBtnCorner.Parent = EspBtn
+
+local AimBtn = Instance.new("TextButton")
+AimBtn.Size = UDim2.new(0.42, 0, 0, 19)
+AimBtn.Position = UDim2.new(0.53, 0, 0.30, 0)
+AimBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+AimBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+AimBtn.TextSize = 9
+AimBtn.Font = Enum.Font.GothamBold
+AimBtn.Text = "AIM: ON"
+AimBtn.Parent = MainFrame
+
+local AimBtnCorner = Instance.new("UICorner")
+AimBtnCorner.CornerRadius = UDim.new(0, 6)
+AimBtnCorner.Parent = AimBtn
+
+local LearnBtn = Instance.new("TextButton")
+LearnBtn.Size = UDim2.new(0.9, 0, 0, 19)
+LearnBtn.Position = UDim2.new(0.05, 0, 0.355, 0)
+LearnBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+LearnBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+LearnBtn.TextSize = 9
+LearnBtn.Font = Enum.Font.GothamBold
+LearnBtn.Text = "PARKOUR LEARNING: ON"
+LearnBtn.Parent = MainFrame
+
+local LearnBtnCorner = Instance.new("UICorner")
+LearnBtnCorner.CornerRadius = UDim.new(0, 6)
+LearnBtnCorner.Parent = LearnBtn
+
+local MatrixBtn = Instance.new("TextButton")
+MatrixBtn.Size = UDim2.new(0.9, 0, 0, 19)
+MatrixBtn.Position = UDim2.new(0.05, 0, 0.41, 0)
+MatrixBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+MatrixBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+MatrixBtn.TextSize = 9
+MatrixBtn.Font = Enum.Font.GothamBold
+MatrixBtn.Text = "3D PITCH LIDAR: ON"
+MatrixBtn.Parent = MainFrame
+
+local MatrixBtnCorner = Instance.new("UICorner")
+MatrixBtnCorner.CornerRadius = UDim.new(0, 6)
+MatrixBtnCorner.Parent = MatrixBtn
+
+local WallBtn = Instance.new("TextButton")
+WallBtn.Size = UDim2.new(0.9, 0, 0, 19)
+WallBtn.Position = UDim2.new(0.05, 0, 0.465, 0)
+WallBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+WallBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+WallBtn.TextSize = 9
+WallBtn.Font = Enum.Font.GothamBold
+WallBtn.Text = "SMOOTH WALL SLIDING: ON"
+WallBtn.Parent = MainFrame
+
+local WallBtnCorner = Instance.new("UICorner")
+WallBtnCorner.CornerRadius = UDim.new(0, 6)
+WallBtnCorner.Parent = WallBtn
+
+local WaterBtn = Instance.new("TextButton")
+WaterBtn.Size = UDim2.new(0.9, 0, 0, 19)
+WaterBtn.Position = UDim2.new(0.05, 0, 0.52, 0)
+WaterBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+WaterBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+WaterBtn.TextSize = 9
+WaterBtn.Font = Enum.Font.GothamBold
+WaterBtn.Text = "WATER RECOVERY: ON"
+WaterBtn.Parent = MainFrame
+
+local WaterBtnCorner = Instance.new("UICorner")
+WaterBtnCorner.CornerRadius = UDim.new(0, 6)
+WaterBtnCorner.Parent = WaterBtn
+
+local DodgeBtn = Instance.new("TextButton")
+DodgeBtn.Size = UDim2.new(0.9, 0, 0, 19)
+DodgeBtn.Position = UDim2.new(0.05, 0, 0.575, 0)
+DodgeBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+DodgeBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+DodgeBtn.TextSize = 9
+DodgeBtn.Font = Enum.Font.GothamBold
+DodgeBtn.Text = "AUTO KNIFE DODGE: AUTO"
+DodgeBtn.Parent = MainFrame
+
+local DodgeBtnCorner = Instance.new("UICorner")
+DodgeBtnCorner.CornerRadius = UDim.new(0, 6)
+DodgeBtnCorner.Parent = DodgeBtn
+
+local CamBtn = Instance.new("TextButton")
+CamBtn.Size = UDim2.new(0.9, 0, 0, 19)
+CamBtn.Position = UDim2.new(0.05, 0, 0.63, 0)
+CamBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+CamBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+CamBtn.TextSize = 9
+CamBtn.Font = Enum.Font.GothamBold
+CamBtn.Text = "FIRST PERSON CAMERA: ON"
+CamBtn.Parent = MainFrame
+
+local CamBtnCorner = Instance.new("UICorner")
+CamBtnCorner.CornerRadius = UDim.new(0, 6)
+CamBtnCorner.Parent = CamBtn
+
+local StealthBtn = Instance.new("TextButton")
+StealthBtn.Size = UDim2.new(0.9, 0, 0, 19)
+StealthBtn.Position = UDim2.new(0.05, 0, 0.685, 0)
+StealthBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+StealthBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+StealthBtn.TextSize = 9
+StealthBtn.Font = Enum.Font.GothamBold
+StealthBtn.Text = "STEALTH TACTICS: ON"
+StealthBtn.Parent = MainFrame
+
+local StealthCorner = Instance.new("UICorner")
+StealthCorner.CornerRadius = UDim.new(0, 6)
+StealthCorner.Parent = StealthBtn
+
+local NeuralBtn = Instance.new("TextButton")
+NeuralBtn.Size = UDim2.new(0.9, 0, 0, 19)
+NeuralBtn.Position = UDim2.new(0.05, 0, 0.74, 0)
+NeuralBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+NeuralBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+NeuralBtn.TextSize = 9
+NeuralBtn.Font = Enum.Font.GothamBold
+NeuralBtn.Text = "UNTOUCHABLE AI: ON"
+NeuralBtn.Parent = MainFrame
+
+local NeuralBtnCorner = Instance.new("UICorner")
+NeuralBtnCorner.CornerRadius = UDim.new(0, 6)
+NeuralBtnCorner.Parent = NeuralBtn
+
+local HumanBtn = Instance.new("TextButton")
+HumanBtn.Size = UDim2.new(0.9, 0, 0, 19)
+HumanBtn.Position = UDim2.new(0.05, 0, 0.795, 0)
+HumanBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+HumanBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+HumanBtn.TextSize = 9
+HumanBtn.Font = Enum.Font.GothamBold
+HumanBtn.Text = "HUMAN BEHAVIOR: ON"
+HumanBtn.Parent = MainFrame
+
+local HumanBtnCorner = Instance.new("UICorner")
+HumanBtnCorner.CornerRadius = UDim.new(0, 6)
+HumanBtnCorner.Parent = HumanBtn
+
+local VisBtn = Instance.new("TextButton")
+VisBtn.Size = UDim2.new(0.9, 0, 0, 19)
+VisBtn.Position = UDim2.new(0.05, 0, 0.85, 0)
+VisBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+VisBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+VisBtn.TextSize = 9
+VisBtn.Font = Enum.Font.GothamBold
+VisBtn.Text = "3D VISUALIZER: ON"
+VisBtn.Parent = MainFrame
+
+local VisBtnCorner = Instance.new("UICorner")
+VisBtnCorner.CornerRadius = UDim.new(0, 6)
+VisBtnCorner.Parent = VisBtn
+
+local MapBtn = Instance.new("TextButton")
+MapBtn.Size = UDim2.new(0.9, 0, 0, 19)
+MapBtn.Position = UDim2.new(0.05, 0, 0.90, 0)
+MapBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+MapBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+MapBtn.TextSize = 9
+MapBtn.Font = Enum.Font.GothamBold
+MapBtn.Text = "LIVE BOT MAP: OFF"
+MapBtn.Parent = MainFrame
+
+local MapBtnCorner = Instance.new("UICorner")
+MapBtnCorner.CornerRadius = UDim.new(0, 6)
+MapBtnCorner.Parent = MapBtn
+
+-- Live square map window. It is separate from the main bot controls so it can
+-- stay open while the compact menu is minimized.
+local MapGui = Instance.new("Frame")
+MapGui.Name = "BotMapWindow"
+MapGui.Size = UDim2.new(0, 286, 0, 318)
+MapGui.Position = UDim2.new(0.68, 0, 0.16, 0)
+MapGui.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+MapGui.BorderSizePixel = 0
+MapGui.Visible = false
+MapGui.Active = true
+MapGui.Parent = ScreenGui
+BotMapPanel = MapGui
+
+local MapGuiCorner = Instance.new("UICorner")
+MapGuiCorner.CornerRadius = UDim.new(0, 10)
+MapGuiCorner.Parent = MapGui
+local MapGuiStroke = Instance.new("UIStroke")
+MapGuiStroke.Color = Color3.fromRGB(70, 180, 255)
+MapGuiStroke.Thickness = 1
+MapGuiStroke.Transparency = 0.25
+MapGuiStroke.Parent = MapGui
+
+local MapTitle = Instance.new("TextLabel")
+MapTitle.Size = UDim2.new(1, -16, 0, 24)
+MapTitle.Position = UDim2.new(0, 8, 0, 3)
+MapTitle.BackgroundTransparency = 1
+MapTitle.Text = "BOT MEMORY MAP / LIVE SCAN"
+MapTitle.TextColor3 = Color3.fromRGB(190, 230, 255)
+MapTitle.TextSize = 10
+MapTitle.Font = Enum.Font.GothamBold
+MapTitle.TextXAlignment = Enum.TextXAlignment.Left
+MapTitle.Parent = MapGui
+
+BotMapCanvas = Instance.new("Frame")
+BotMapCanvas.Size = UDim2.new(0, 248, 0, 248)
+BotMapCanvas.Position = UDim2.new(0.5, -124, 0, 31)
+BotMapCanvas.BackgroundColor3 = Color3.fromRGB(5, 7, 11)
+BotMapCanvas.BorderSizePixel = 0
+BotMapCanvas.ClipsDescendants = true
+BotMapCanvas.Parent = MapGui
+
+local CanvasCorner = Instance.new("UICorner")
+CanvasCorner.CornerRadius = UDim.new(0, 6)
+CanvasCorner.Parent = BotMapCanvas
+
+for y = 1, BOT_MAP_GRID do
+    for x = 1, BOT_MAP_GRID do
+        local cell = Instance.new("Frame")
+        cell.BorderSizePixel = 0
+        cell.BackgroundColor3 = Color3.fromRGB(8, 10, 15)
+        cell.Size = UDim2.new(0, 8, 0, 8)
+        cell.Position = UDim2.new(0, (x - 1) * 8, 0, (y - 1) * 8)
+        cell.Parent = BotMapCanvas
+        BotMapCells[#BotMapCells + 1] = cell
+    end
+end
+
+local MapPlayerDot = Instance.new("Frame")
+MapPlayerDot.Size = UDim2.new(0, 8, 0, 8)
+MapPlayerDot.Position = UDim2.new(0.5, -4, 0.5, -4)
+MapPlayerDot.BackgroundColor3 = Color3.fromRGB(70, 255, 140)
+MapPlayerDot.BorderSizePixel = 0
+MapPlayerDot.ZIndex = 10
+MapPlayerDot.Parent = BotMapCanvas
+local MapPlayerCorner = Instance.new("UICorner")
+MapPlayerCorner.CornerRadius = UDim.new(1, 0)
+MapPlayerCorner.Parent = MapPlayerDot
+
+BotMapStatus = Instance.new("TextLabel")
+BotMapStatus.Size = UDim2.new(1, -16, 0, 30)
+BotMapStatus.Position = UDim2.new(0, 8, 0, 283)
+BotMapStatus.BackgroundTransparency = 1
+BotMapStatus.Text = "SCANNING: 0 cells | SAVE: waiting"
+BotMapStatus.TextColor3 = Color3.fromRGB(125, 160, 180)
+BotMapStatus.TextSize = 8
+BotMapStatus.Font = Enum.Font.GothamMedium
+BotMapStatus.TextXAlignment = Enum.TextXAlignment.Left
+BotMapStatus.Parent = MapGui
+
+local function updateBotMapWindow()
+    if not BotMapPanel or not BotMapCanvas or not BOT_MAP_VISIBLE then return end
+    local char, hrp = getCharacter()
+    if not hrp then return end
+    if not botMapState.origin then return end
+
+    local pgx, pgz = botMapWorldToCell(hrp.Position)
+    local half = math.floor(BOT_MAP_GRID / 2)
+    local idx = 1
+    for y = -half, half do
+        for x = -half, half do
+            local cell = BotMapCells[idx]
+            local gx, gz = pgx + x, pgz + y
+            local value = botMapState.cells[botMapCellKey(gx, gz)]
+            if value == 2 then
+                cell.BackgroundColor3 = Color3.fromRGB(175, 80, 90)
+            elseif value == 1 then
+                cell.BackgroundColor3 = Color3.fromRGB(48, 68, 82)
+            else
+                cell.BackgroundColor3 = Color3.fromRGB(7, 9, 14)
+            end
+            idx = idx + 1
+        end
+    end
+
+    BotMapStatus.Text = string.format("LIVE: %d cells | %s | %s",
+        (function() local n=0 for _ in pairs(botMapState.cells) do n=n+1 end return n end)(),
+        botMapState.dirty and "UNSAVED" or "SAVED",
+        tostring(botMapState.mapName or "Unknown"))
+end
+
+local mapDragging, mapDragStart, mapStartPos
+MapGui.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        mapDragging = true; mapDragStart = input.Position; mapStartPos = MapGui.Position
+    end
+end)
+MapGui.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then mapDragging = false end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if mapDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - mapDragStart
+        MapGui.Position = UDim2.new(mapStartPos.X.Scale, mapStartPos.X.Offset + delta.X, mapStartPos.Y.Scale, mapStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+
+MinBtn.Activated:Connect(function()
+    IS_MINIMIZED = not IS_MINIMIZED
+    local targetSize = IS_MINIMIZED and UDim2.new(0, 230, 0, 28) or UDim2.new(0, 230, 0, 455)
+
+    TweenService:Create(MainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize}):Play()
+    MinBtn.Text = IS_MINIMIZED and "[+]" or "[-]"
+
+    for _, element in ipairs(MainFrame:GetChildren()) do
+        if element:IsA("GuiObject") and element ~= TitleLabel and element ~= MinBtn and element ~= MainCorner and element ~= MainStroke then
+            element.Visible = not IS_MINIMIZED
+        end
+    end
+end)
+
+local function updateUI()
+    if AI_ENABLED then
+        ToggleBtn.Text = "BOT ENGINE: [ ON ]"
+        ToggleBtn.TextColor3 = Color3.fromRGB(60, 255, 60)
+        MainStroke.Color = Color3.fromRGB(60, 255, 60)
+    else
+        ToggleBtn.Text = "BOT ENGINE: [ OFF ]"
+        ToggleBtn.TextColor3 = Color3.fromRGB(255, 60, 60)
+        MainStroke.Color = Color3.fromRGB(50, 50, 70)
+        StatusLabel.Text = "State: OFF"
+    end
+end
+
+ToggleBtn.Activated:Connect(function()
+    AI_ENABLED = not AI_ENABLED
+    currentTargetPos = nil
+    stuckCheckTimer = 0
+    cachedWaypoints = {}
+    stopCurrentEmote()
+    updateUI()
+
+    if AI_ENABLED and CAMERA_LOCK then
+        setBotCameraMode(true)
+    elseif not AI_ENABLED then
+        setBotCameraMode(false)
+        local _, _, humanoid = getCharacter()
+        if humanoid then
+            humanoid:MoveTo(humanoid.Parent.HumanoidRootPart.Position)
+            Camera.FieldOfView = defaultFOV
+        end
+    end
+end)
+
+EspBtn.Activated:Connect(function() ESP_ENABLED = not ESP_ENABLED; EspBtn.Text = ESP_ENABLED and "ESP: ON" or "ESP: OFF"; EspBtn.TextColor3 = ESP_ENABLED and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60); updateESP() end)
+AimBtn.Activated:Connect(function() SILENT_AIM = not SILENT_AIM; AimBtn.Text = SILENT_AIM and "AIM: ON" or "AIM: OFF"; AimBtn.TextColor3 = SILENT_AIM and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+LearnBtn.Activated:Connect(function() PARKOUR_LEARNING = not PARKOUR_LEARNING; LearnBtn.Text = PARKOUR_LEARNING and "PARKOUR LEARNING: ON" or "PARKOUR LEARNING: OFF"; LearnBtn.TextColor3 = PARKOUR_LEARNING and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+MatrixBtn.Activated:Connect(function() MATRIX_SCANNER = not MATRIX_SCANNER; MatrixBtn.Text = MATRIX_SCANNER and "3D PITCH LIDAR: ON" or "3D PITCH LIDAR: OFF"; MatrixBtn.TextColor3 = MATRIX_SCANNER and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+WallBtn.Activated:Connect(function() WALL_AVOIDANCE = not WALL_AVOIDANCE; WallBtn.Text = WALL_AVOIDANCE and "SMOOTH WALL SLIDING: ON" or "SMOOTH WALL SLIDING: OFF"; WallBtn.TextColor3 = WALL_AVOIDANCE and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+WaterBtn.Activated:Connect(function() WATER_EXIT = not WATER_EXIT; WaterBtn.Text = WATER_EXIT and "WATER RECOVERY: ON" or "WATER RECOVERY: OFF"; WaterBtn.TextColor3 = WATER_EXIT and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+DodgeBtn.Activated:Connect(function() KNIFE_DODGE = not KNIFE_DODGE; DodgeBtn.Text = KNIFE_DODGE and "AUTO KNIFE DODGE: AUTO" or "AUTO KNIFE DODGE: OFF"; DodgeBtn.TextColor3 = KNIFE_DODGE and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+CamBtn.Activated:Connect(function()
+    CAMERA_LOCK = not CAMERA_LOCK
+    CamBtn.Text = CAMERA_LOCK and "FIRST PERSON CAMERA: ON" or "FIRST PERSON CAMERA: OFF"
+    CamBtn.TextColor3 = CAMERA_LOCK and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60)
+    if CAMERA_LOCK and AI_ENABLED then
+        setBotCameraMode(true)
+    else
+        setBotCameraMode(false)
+    end
+end)
+StealthBtn.Activated:Connect(function() STEALTH_MODE = not STEALTH_MODE; StealthBtn.Text = STEALTH_MODE and "STEALTH TACTICS: ON" or "STEALTH TACTICS: OFF"; StealthBtn.TextColor3 = STEALTH_MODE and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+NeuralBtn.Activated:Connect(function() NEURAL_EVASION = not NEURAL_EVASION; NeuralBtn.Text = NEURAL_EVASION and "UNTOUCHABLE AI: ON" or "UNTOUCHABLE AI: OFF"; NeuralBtn.TextColor3 = NEURAL_EVASION and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+HumanBtn.Activated:Connect(function() HUMANIZER_ENABLED = not HUMANIZER_ENABLED; HumanBtn.Text = HUMANIZER_ENABLED and "HUMAN BEHAVIOR: ON" or "HUMAN BEHAVIOR: OFF"; HumanBtn.TextColor3 = HUMANIZER_ENABLED and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+VisBtn.Activated:Connect(function() VISUALIZER_ENABLED = not VISUALIZER_ENABLED; VisBtn.Text = VISUALIZER_ENABLED and "3D VISUALIZER: ON" or "3D VISUALIZER: OFF"; VisBtn.TextColor3 = VISUALIZER_ENABLED and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60) end)
+MapBtn.Activated:Connect(function()
+    BOT_MAP_ENABLED = not BOT_MAP_ENABLED
+    BOT_MAP_VISIBLE = BOT_MAP_ENABLED
+    MapBtn.Text = BOT_MAP_ENABLED and "LIVE BOT MAP: ON" or "LIVE BOT MAP: OFF"
+    MapBtn.TextColor3 = BOT_MAP_ENABLED and Color3.fromRGB(60, 255, 60) or Color3.fromRGB(255, 60, 60)
+    if BotMapPanel then BotMapPanel.Visible = BOT_MAP_VISIBLE end
+    if BOT_MAP_ENABLED then
+        local _, hrp = getCharacter()
+        if hrp then botMapLoad(BrainState.CurrentMapName or "Unknown", hrp.Position) end
+    else
+        botMapSave()
+    end
+end)
+
+local dragging, dragStart, startPos
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = MainFrame.Position
+    end
+end)
+MainFrame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+--------------------------------------------------------------------------------
+-- HIGH-SPEED MAIN BOT BRAIN LOOP
+--------------------------------------------------------------------------------
+task.spawn(function()
+    while true do
+        task.wait(NAV_TICK)
+
+        pcall(scanAndAnalyzeMap)
+        pcall(function()
+            local mapName = BrainState.CurrentMapName or "Unknown"
+            if botMapState.loaded and botMapState.mapName ~= mapName then
+                botMapResetForNewMap()
+            end
+            local _, mapHrp = getCharacter()
+            if mapHrp then botMapScanVision(mapHrp) end
+            updateBotMapWindow()
+        end)
+        pcall(updateCoinBagStatus)
+        pcall(observePlayerMovements)
+
+        MapLabel.Text = "Map: " .. BrainState.CurrentMapName
+        MemoryLabel.Text = "Parkour Nodes Learned: " .. tostring(#ParkourMemory.LearnedNodes)
+
+        if not AI_ENABLED then continue end
+
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local humanoid = char and char:FindFirstChild("Humanoid")
+        
+        if humanoid and humanoid.Health <= 0 then
+            if not wasDeadLastFrame and hrp then
+                logDeathPosition(hrp.Position)
+                wasDeadLastFrame = true
+            end
+            continue
+        elseif humanoid and humanoid.Health > 0 then
+            wasDeadLastFrame = false
+        end
+
+        if not char or not hrp or not humanoid then continue end
+
+        pcall(function() runMatrixScanner(hrp) end)
+
+        if handleSwimming(humanoid, hrp) then
+            StatusLabel.Text = "SWIMMING: Exiting Pool!"
+            continue
+        end
+
+        local flyingKnife=scanFlyingKnives(hrp)
+        if flyingKnife then
+            local dodgePos=getKnifeDodgePosition(hrp,flyingKnife)
+            if dodgePos then
+                humanoid.Jump=true
+                currentTargetPos=dodgePos
+                isTargetCoin=false
+                StatusLabel.Text="PREDICTIVE DODGE: KNIFE TRAJECTORY"
+                navigateToSmooth(currentTargetPos,false)
+                continue
+            end
+        end
+
+        -- Progress-based anti-stuck: only triggers when a real target exists.
+        if currentTargetPos then
+            local moved = getDistance(hrp.Position, lastCheckPos)
+            if moved < MIN_PROGRESS then
+                stuckCheckTimer = stuckCheckTimer + NAV_TICK
+            else
+                stuckCheckTimer = math.max(0, stuckCheckTimer - NAV_TICK * 2)
+                NavState.LastProgressTime = os.clock()
+            end
+
+            if stuckCheckTimer > STUCK_TIME then
+                if currentTargetObject and isTargetCoin then
+                    ignoredCoinsMemory[currentTargetObject] = os.clock() + 15
+                    currentTargetObject = nil
+                end
+                recoverFromStuck(hrp, humanoid, currentTargetPos)
+                stuckCheckTimer = 0
+            end
+        else
+            stuckCheckTimer = 0
+        end
+        lastCheckPos = hrp.Position
+
+        ------------------------------------------------------------------------
+        -- MODE 1: LOBBY
+        ------------------------------------------------------------------------
+        if isLobby() then
+            BrainState.ThreatLevel = 0
+            ThreatLabel.Text = "Threat Score: 0% (Safe)"
+            TelemetryLabel.Text = "AI LOBBY | Memory:" .. tostring(#ParkourMemory.LearnedNodes) .. " | Recoveries:" .. tostring(NavState.RecoveryCount)
+            lobbyActionTimer = lobbyActionTimer + NAV_TICK
+
+            if lobbyActionTimer > math.random(3, 5) then
+                lobbyActionTimer = 0
+                local randVal = math.random(1, 100)
+
+                if randVal <= 35 then
+                    lobbyAction = "WANDER"; stopCurrentEmote()
+                elseif randVal <= 65 then
+                    lobbyAction = "SOCIALIZE"; stopCurrentEmote()
+                    local otherPlayers = {}
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then table.insert(otherPlayers, p) end
+                    end
+                    if #otherPlayers > 0 then lobbyTargetPlayer = otherPlayers[math.random(1, #otherPlayers)] end
+                elseif randVal <= 90 then lobbyAction = "EMOTE"
+                else lobbyAction = "IDLE"; stopCurrentEmote() end
+            end
+
+            if lobbyAction == "WANDER" then
+                StatusLabel.Text = "LOBBY: Wandering & Scanning"
+                isTargetCoin = false
+                if not currentTargetPos or getDistance(hrp.Position, currentTargetPos) < 4 then
+                    currentTargetPos = getRandomWanderPoint(hrp.Position)
+                end
+            elseif lobbyAction == "SOCIALIZE" and lobbyTargetPlayer and lobbyTargetPlayer.Character and lobbyTargetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                StatusLabel.Text = "LOBBY: Socializing near " .. lobbyTargetPlayer.Name
+                isTargetCoin = false
+                local targetHrp = lobbyTargetPlayer.Character.HumanoidRootPart
+                if getDistance(hrp.Position, targetHrp.Position) > 6 then
+                    currentTargetPos = targetHrp.Position + Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
+                else
+                    hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(targetHrp.Position.X, hrp.Position.Y, targetHrp.Position.Z))
+                    currentTargetPos = nil
+                    playDirectLobbyEmote()
+                end
+            elseif lobbyAction == "EMOTE" then
+                StatusLabel.Text = "LOBBY: Multi-Emote Combo"
+                isTargetCoin = false
+                currentTargetPos = nil
+                playDirectLobbyEmote()
+                if lobbyActionTimer > 3.0 then stopCurrentEmote(); lobbyAction = "WANDER" end
+            else
+                StatusLabel.Text = "LOBBY: AFK Inspection"
+                isTargetCoin = false
+                currentTargetPos = nil
+            end
+
+            if HUMANIZER_ENABLED and math.random(1, 200) == 1 then humanoid.Jump = true end
+
+        ------------------------------------------------------------------------
+        -- MODE 2: MATCH
+        ------------------------------------------------------------------------
+        else
+            stopCurrentEmote()
+            local role = getMyRole()
+            local murdererPlayer = findSpecialPlayer("Murderer")
+            local murdererHrp = murdererPlayer and murdererPlayer.Character and murdererPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+            local threatScore = evaluateThreatLevel(murdererHrp)
+            ThreatLabel.Text = "Threat: " .. tostring(threatScore) .. "% | Dist: " .. tostring(math.floor(BrainState.MurdererDistance))
+            TelemetryLabel.Text = "AI " .. role .. " | LOS:" .. (NavState.MurdererVisible and "YES" or "NO") .. " | Closing:" .. tostring(math.floor(NavState.ClosingSpeed)) .. " | Recoveries:" .. tostring(NavState.RecoveryCount)
+
+            local droppedGun = findDroppedGun()
+            local hasWeapon = (role == "Sheriff" or role == "Murderer" or (droppedGun and isGunDropSafe(droppedGun, murdererHrp)))
+            
+            BrainState.CurrentStrategy = DetermineOptimalStrategy(
+                threatScore, 
+                role, 
+                hasWeapon, 
+                BrainState.CoinsCollected, 
+                BrainState.MaxCoins,
+                BrainState.MurdererDistance
+            )
+
+            --------------------------------------------------------------------
+            -- EXECUTE STRATEGY & ADVANCED ANTI-CAMP CORNER LOGIC
+            --------------------------------------------------------------------
+            if role == "Murderer" then
+                isTargetCoin = false
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+                local targetPlayer, isGunUser = getMurdererTarget()
+
+                if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local tHrp = targetPlayer.Character.HumanoidRootPart
+                    local dist = getDistance(hrp.Position, tHrp.Position)
+                    local clearLine = hasLineOfSight(hrp.Position, tHrp.Position)
+
+                    if isGunUser and not clearLine then
+                        StatusLabel.Text = "MURDERER: Fake Peek & Throw Knife!"
+                        
+                        if not PeekState.IsPeeking then
+                            PeekState.IsPeeking = true
+                            PeekState.TargetHrp = tHrp
+                            PeekState.CoverPos = hrp.Position
+                            PeekState.PeekPos = hrp.Position + (tHrp.Position - hrp.Position).Unit * 12
+                            PeekState.Timer = os.clock()
+                        end
+
+                        if PeekState.IsPeeking then
+                            local elapsed = os.clock() - PeekState.Timer
+                            if elapsed < 0.38 then
+                                currentTargetPos = PeekState.PeekPos
+                            elseif elapsed < 0.68 then
+                                if knife then
+                                    local predictedPos = getPredictedPosition(tHrp, 210)
+                                    executeKnifeThrow(knife, predictedPos or tHrp.Position)
+                                end
+                                currentTargetPos = PeekState.CoverPos
+                            else
+                                PeekState.IsPeeking = false
+                            end
+                        end
+                    elseif isGunUser and clearLine then
+                        StatusLabel.Text = "MURDERER: Flanking/Attacking Gun User"
+                        if dist < 12 and knife then
+                            executeRealTapAttack(knife, tHrp.Position)
+                        elseif dist >= 12 and dist < 85 and knife then
+                            local predictedPos = getPredictedPosition(tHrp, 210)
+                            executeKnifeThrow(knife, predictedPos or tHrp.Position)
+                            currentTargetPos = tHrp.Position
+                        else
+                            currentTargetPos = tHrp.Position
+                        end
+                    else
+                        StatusLabel.Text = "MURDERER: Eliminating target"
+                        currentTargetPos = tHrp.Position
+                        if dist < 9 and knife then
+                            executeRealTapAttack(knife, tHrp.Position)
+                        elseif dist >= 12 and dist < 70 and knife then
+                            local predictedPos = getPredictedPosition(tHrp, 210)
+                            executeKnifeThrow(knife, predictedPos or tHrp.Position)
+                        end
+                    end
+                else
+                    StatusLabel.Text = "MURDERER: Searching victims"
+                    wanderTimer = wanderTimer + NAV_TICK
+                    if not currentTargetPos or wanderTimer > 3.0 or getDistance(hrp.Position, currentTargetPos) < 4 then
+                        wanderTimer = 0
+                        currentTargetPos = getRandomWanderPoint(hrp.Position)
+                    end
+                end
+
+            elseif role == "Sheriff" then
+                isTargetCoin = false
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+
+                if murdererHrp then
+                    local dist = getDistance(hrp.Position, murdererHrp.Position)
+                    local sheriffAimPos = murdererHrp.Position + Vector3.new(0, 1.35, 0)
+                    if NavState.MurdererVisible and dist < 90 then
+                        setCombatCameraTarget(sheriffAimPos, 0.30)
+                    end
+                    StatusLabel.Text = "SHERIFF: Engaging Murderer!"
+
+                    if threatScore > 75 then
+                        currentTargetPos = getCoverEscapePosition(hrp.Position, murdererHrp, 35)
+                        if os.clock() - jumpCooldown > 0.5 then humanoid.Jump = true; jumpCooldown = os.clock() end
+                    elseif AUTO_STRAFE and dist < 65 then
+                        local strafeDir = hrp.CFrame.RightVector * (math.sin(os.clock() * 10) * 16)
+                        currentTargetPos = murdererHrp.Position + strafeDir
+                    else
+                        currentTargetPos = murdererHrp.Position
+                    end
+
+                    if gun and SILENT_AIM then
+                        local canSee=hasLineOfSight(hrp.Position+Vector3.new(0,1.2,0),murdererHrp.Position+Vector3.new(0,1.2,0),murdererHrp.Parent)
+                        if canSee and threatScore<92 then
+                            local aimPos = murdererHrp.Position + Vector3.new(0, 1.35, 0)
+                            executeRealTapAttack(gun, aimPos)
+                        end
+                    end
+                else
+                    wanderTimer = wanderTimer + NAV_TICK
+                    if not currentTargetPos or wanderTimer > 3.0 or getDistance(hrp.Position, currentTargetPos) < 4 then
+                        wanderTimer = 0; currentTargetPos = getRandomWanderPoint(hrp.Position)
+                    end
+                end
+
+            else -- INNOCENT
+                if BrainState.CurrentStrategy == "ESCAPE" and murdererHrp and (threatScore >= 45 or BrainState.MurdererDistance < 24) then
+                    isTargetCoin = false
+                    StatusLabel.Text = "INNOCENT: Threat Confirmed - Escaping"
+
+                    local escapeTarget = getCoverEscapePosition(hrp.Position, murdererHrp, 60)
+
+                    if AUTO_STRAFE and BrainState.MurdererDistance < 36 then
+                        local strafeSide = hrp.CFrame.RightVector * (math.sin(os.clock() * 7) * 6)
+                        escapeTarget = escapeTarget + strafeSide
+                    end
+
+                    currentTargetPos = escapeTarget
+
+                    if (threatScore > 70 or
+                        (BrainState.MurdererDistance < 18 and NavState.MurdererVisible)) and
+                        os.clock() - jumpCooldown > 0.5 then
+                        humanoid.Jump = true
+                        jumpCooldown = os.clock()
+                    end
+
+                elseif droppedGun then
+                    local gunPos = droppedGun.Position
+                    local safeToPickup = isGunDropSafe(droppedGun, murdererHrp)
+
+                    if safeToPickup then
+                        isTargetCoin = false
+                        StatusLabel.Text = "GUN SAFE: Rushing Gun Retrieval!"
+                        currentTargetPos = gunPos
+                        local verticalDiff = gunPos.Y - hrp.Position.Y
+                        local horizDist = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(gunPos.X, 0, gunPos.Z)).Magnitude
+                        if verticalDiff > 2.2 and horizDist < 10 and os.clock() - jumpCooldown > 0.6 then 
+                            humanoid.Jump = true
+                            jumpCooldown = os.clock()
+                        end
+                    else
+                        isTargetCoin = false
+                        if murdererHrp then
+                            local mDistToGun = getDistance(gunPos, murdererHrp.Position)
+                            StatusLabel.Text = "GUN CAMPED (" .. math.floor(mDistToGun) .. "m): Flanking & Holding Cover"
+                            
+                            local flankPoint = getFlankGunPosition(hrp.Position, gunPos, murdererHrp.Position)
+                            
+                            if getDistance(hrp.Position, murdererHrp.Position) < 38 then
+                                currentTargetPos = getCoverEscapePosition(hrp.Position, murdererHrp, 48)
+                            else
+                                currentTargetPos = flankPoint
+                            end
+                        else
+                            StatusLabel.Text = "WAITING: Waiting for Safe Gun Corridor"
+                            currentTargetPos = gunPos + Vector3.new(20, 0, 20)
+                        end
+                    end
+                    
+                elseif BrainState.CurrentStrategy == "HIDE" then
+                    isTargetCoin = false
+                    StatusLabel.Text = "BAG FULL: Tactical Hiding"
+                    if murdererHrp then currentTargetPos = getCoverEscapePosition(hrp.Position, murdererHrp, 60)
+                    else
+                        wanderTimer = wanderTimer + NAV_TICK
+                        if not currentTargetPos or wanderTimer > 4.0 then
+                            wanderTimer = 0; currentTargetPos = getRandomWanderPoint(hrp.Position)
+                        end
+                    end
+                    
+                else -- FARM
+                    local coinObj = findNearestCoin(hrp.Position)
+                    if coinObj then
+                        isTargetCoin = true
+                        currentTargetObject = coinObj
+                        StatusLabel.Text = "MATCH: Collecting Coin Safely"
+                        currentTargetPos = coinObj.Position
+                    else
+                        isTargetCoin = false
+                        currentTargetObject = nil
+                        StatusLabel.Text = "MATCH: Tactical Wandering"
+                        wanderTimer = wanderTimer + NAV_TICK
+                        if not currentTargetPos or wanderTimer > 3.0 or getDistance(hrp.Position, currentTargetPos) < 4 then
+                            wanderTimer = 0; currentTargetPos = getRandomWanderPoint(hrp.Position)
+                        end
+                    end
+                end
+            end
+        end
+
+        ------------------------------------------------------------------------
+        -- EXECUTE MOVEMENT
+        ------------------------------------------------------------------------
+        if currentTargetPos then
+            navigateToSmooth(currentTargetPos, isTargetCoin)
+        end
+    end
+end)
+
+print("MM2 BOT (BETA) Loaded Successfully.")
